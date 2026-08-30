@@ -32,10 +32,12 @@ export type CompressionMode = "range" | "message"
 
 export type BlockGeneration = "young" | "old"
 
-export type CompressionTier = 1 | 2 | 3
+export type CompressionTier = number
 
 export interface CompressionBlock {
     blockId: number
+    /** Stable model-facing checkpoint ref, e.g. B001 or C004. */
+    ref?: string
     runId: number
     active: boolean
     deactivatedByUser: boolean
@@ -94,6 +96,14 @@ export interface MessageIdState {
     nextRef: number
 }
 
+export interface PendingCompression {
+    /** Frozen model-facing block refs, oldest first. */
+    candidates: string[]
+    /** Last candidate before the untouched cache-stable suffix. */
+    cacheBoundary: string
+    createdAtTokens?: number
+}
+
 export interface Nudges {
     contextLimitAnchors: Set<string>
     turnNudgeAnchors: Set<string>
@@ -127,6 +137,7 @@ export interface Nudges {
      * one extra early-return on the first call, then normal behavior resumes.
      */
     lastProcessedCompressMessageId: string | undefined
+    pendingCompression: PendingCompression | undefined
 }
 
 export interface SessionState {

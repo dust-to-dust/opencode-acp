@@ -23,10 +23,7 @@ export interface ToolFactoryContext {
 // [FIX #33] Resolve the caller's per-session state at tool-call time and build a
 // ToolContext bound to it. A compress tool can only run after messages.transform
 // initialized the session, so the state is guaranteed present.
-export function resolveToolContext(
-    factoryCtx: ToolFactoryContext,
-    sessionID: string,
-): ToolContext {
+export function resolveToolContext(factoryCtx: ToolFactoryContext, sessionID: string): ToolContext {
     const state = factoryCtx.registry.get(sessionID)
     if (!state) {
         throw new Error(
@@ -43,35 +40,13 @@ export function resolveToolContext(
     }
 }
 
-export interface CompressRangeEntry {
-    /** Per-entry topic for batch compression. Falls back to top-level `topic`. */
-    topic?: string
-    startId: string
-    endId: string
-    summary: string
-}
-
-export interface CompressRangeToolArgs {
-    /** Fallback topic for entries without their own. Optional if every entry has one. */
-    topic?: string
-    content: CompressRangeEntry[]
-    summaryMaxChars?: number
-    dangerous?: boolean
-    acknowledgeRisk?: boolean
-}
-
-export interface CompressMessageEntry {
-    messageId: string
-    topic: string
-    summary: string
-}
-
-export interface CompressMessageToolArgs {
-    topic: string
-    content: CompressMessageEntry[]
-    summaryMaxChars?: number
-    dangerous?: boolean
-    acknowledgeRisk?: boolean
+export interface CompressSelectionToolArgs {
+    /** Candidate blocks that must remain verbatim. Omitted candidates are compressed. */
+    keep: string[]
+    /** Durable facts confirmed by the consumed blocks. */
+    confirmedFacts: string[]
+    /** Concrete unfinished work that must survive compression. */
+    nextSteps: string[]
 }
 
 export interface BoundaryReference {
@@ -96,37 +71,6 @@ export interface SelectionResolution {
     messageTokenById: Map<string, number>
     toolIds: string[]
     requiredBlockIds: number[]
-}
-
-export interface ResolvedMessageCompression {
-    entry: CompressMessageEntry
-    selection: SelectionResolution
-    anchorMessageId: string
-}
-
-export interface ResolvedRangeCompression {
-    index: number
-    entry: CompressRangeEntry
-    selection: SelectionResolution
-    anchorMessageId: string
-}
-
-export interface ResolvedMessageCompressionsResult {
-    plans: ResolvedMessageCompression[]
-    skippedIssues: string[]
-    skippedCount: number
-}
-
-export interface ParsedBlockPlaceholder {
-    raw: string
-    blockId: number
-    startIndex: number
-    endIndex: number
-}
-
-export interface InjectedSummaryResult {
-    expandedSummary: string
-    consumedBlockIds: number[]
 }
 
 export interface AppliedCompressionResult {

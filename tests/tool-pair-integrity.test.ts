@@ -11,11 +11,7 @@ function rawId(): string {
     return `raw-${nextRawId++}`
 }
 
-function makeMessage(opts: {
-    id?: string
-    role?: "user" | "assistant"
-    parts?: any[]
-}): WithParts {
+function makeMessage(opts: { id?: string; role?: "user" | "assistant"; parts?: any[] }): WithParts {
     const id = opts.id ?? rawId()
     const role = opts.role ?? "assistant"
     return {
@@ -45,7 +41,11 @@ function makeMessage(opts: {
     }
 }
 
-function makeAssistantWithToolCall(id: string, callIDs: string[], text = "calling tool"): WithParts {
+function makeAssistantWithToolCall(
+    id: string,
+    callIDs: string[],
+    text = "calling tool",
+): WithParts {
     const toolParts = callIDs.map((callID) => ({
         type: "tool",
         callID,
@@ -111,7 +111,7 @@ function makeState(messages: WithParts[]): SessionState {
     for (let i = 0; i < messages.length; i++) {
         const msg = messages[i]
         if (!msg) continue
-        const ref = `m${String(i + 1).padStart(5, "0")}`
+        const ref = `A${String(i + 1).padStart(3, "0")}`
         state.messageIds.byRef.set(ref, msg.info.id)
         state.messageIds.byRawId.set(msg.info.id, ref)
     }
@@ -145,10 +145,10 @@ test("forward extension: tool_use at endIdx, tool_result at endIdx+1 → range e
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Model compresses m00001–m00003 (u1, a1, a2)
-    // a2 (m00003) has tool_use(call-abc), u2 (m00004) has tool_result(call-abc)
+    // Model compresses A001–A003 (u1, a1, a2)
+    // a2 (A003) has tool_use(call-abc), u2 (A004) has tool_result(call-abc)
     // Without fix: u2 survives with orphaned reference
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00003")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A003")
 
     assert.equal(endReference.rawIndex, 3, "endIdx should extend to include tool_result at index 3")
     assert.equal(endReference.messageId, "u2", "endIdx messageId should be the tool_result message")
@@ -167,13 +167,21 @@ test("backward extension: tool_result at startIdx, tool_use at startIdx-1 → ra
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Model compresses m00003–m00005 (u2, a2, a3)
-    // u2 (m00003) has tool_result(call-xyz), a1 (m00002) has tool_use(call-xyz)
+    // Model compresses A003–A005 (u2, a2, a3)
+    // u2 (A003) has tool_result(call-xyz), a1 (A002) has tool_use(call-xyz)
     // Without fix: a1 survives with orphaned tool_use
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00003", "m00005")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A003", "A005")
 
-    assert.equal(startReference.rawIndex, 1, "startIdx should extend back to include tool_use at index 1")
-    assert.equal(startReference.messageId, "a1", "startIdx messageId should be the tool_use message")
+    assert.equal(
+        startReference.rawIndex,
+        1,
+        "startIdx should extend back to include tool_use at index 1",
+    )
+    assert.equal(
+        startReference.messageId,
+        "a1",
+        "startIdx messageId should be the tool_use message",
+    )
     assert.equal(endReference.rawIndex, 4, "endIdx unchanged")
 })
 
@@ -188,7 +196,7 @@ test("no extension when both tool_use and tool_result are inside range", () => {
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00003")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A003")
 
     assert.equal(startReference.rawIndex, 0, "startIdx unchanged — pair is inside range")
     assert.equal(endReference.rawIndex, 2, "endIdx unchanged — pair is inside range")
@@ -205,7 +213,7 @@ test("no extension when range has no tool calls", () => {
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00003")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A003")
 
     assert.equal(startReference.rawIndex, 0)
     assert.equal(endReference.rawIndex, 2)
@@ -224,9 +232,9 @@ test("multiple tool results: one tool_use with multiple result messages → all 
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Model compresses m00001–m00003 (u1, a1, a2)
+    // Model compresses A001–A003 (u1, a1, a2)
     // a2 has tool_use, u2 and u3 both have tool_result for same callID
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00003")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A003")
 
     assert.equal(endReference.rawIndex, 4, "endIdx extends to include both tool_result messages")
     assert.equal(endReference.messageId, "u3")
@@ -244,9 +252,9 @@ test("parallel tool calls: assistant with multiple tool_use, results in subseque
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Model compresses m00001–m00002 (u1, a1)
+    // Model compresses A001–A002 (u1, a1)
     // a1 has tool_use for call-a and call-b; u2 has call-a result, u3 has call-b result
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00002")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A002")
 
     assert.equal(endReference.rawIndex, 3, "endIdx extends to include both parallel tool results")
 })
@@ -263,15 +271,11 @@ test("gap tolerance: non-tool message between tool_use and result still matched"
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Model compresses m00001–m00002 (u1, a1)
-    // a1 has tool_use, m00003 is non-tool, u2 (m00004) has result
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00002")
+    // Model compresses A001–A002 (u1, a1)
+    // a1 has tool_use, A003 is non-tool, u2 (A004) has result
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A002")
 
-    assert.equal(
-        endReference.rawIndex,
-        3,
-        "endIdx extends past the gap to include the tool_result",
-    )
+    assert.equal(endReference.rawIndex, 3, "endIdx extends past the gap to include the tool_result")
 })
 
 test("adjustment flows through to resolveSelection: toolIds include paired messages", () => {
@@ -286,7 +290,7 @@ test("adjustment flows through to resolveSelection: toolIds include paired messa
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00003")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A003")
     const selection = resolveSelection(ctx, startReference, endReference)
 
     assert.ok(selection.messageIds.includes("u2"), "tool_result message included in selection")
@@ -297,7 +301,7 @@ test("adjustment flows through to resolveSelection: toolIds include paired messa
 test("backward extension changes startReference kind from block to message when needed", () => {
     const messages = [
         makeUserText("u1", "start"),
-        makeAssistantWithToolCall("a1", ["call-block"]),  // tool_use
+        makeAssistantWithToolCall("a1", ["call-block"]), // tool_use
         makeUserWithToolResult("u2", "call-block", "result"), // tool_result
         makeAssistantText("a2", "processing"),
         makeAssistantText("a3", "done"),
@@ -306,9 +310,9 @@ test("backward extension changes startReference kind from block to message when 
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Model compresses starting from m00003 (u2, the tool_result)
-    // a1 (m00002) has the tool_use — must be included
-    const { startReference } = resolveBoundaryIds(ctx, state, "m00003", "m00005")
+    // Model compresses starting from A003 (u2, the tool_result)
+    // a1 (A002) has the tool_use — must be included
+    const { startReference } = resolveBoundaryIds(ctx, state, "A003", "A005")
 
     assert.equal(startReference.rawIndex, 1, "startIdx extended backward to tool_use")
     assert.equal(startReference.kind, "message", "kind is message after extension")
@@ -322,17 +326,31 @@ test("block boundary: kind preserved (compress tool calls excluded from scan)", 
         makeAssistantWithToolCall("a2", ["call-real"], "calling read"),
         makeUserWithToolResult("u2", "call-real", "result"),
         makeAssistantText("a3", "summarizing"),
-        // Block b0 anchor at this compress call (m00006)
+        // Checkpoint B001 anchor at this compress call (A006)
         makeMessage({
             id: "compress-a4",
             role: "assistant",
-            parts: [{ type: "tool", callID: "call-compress-1", tool: "compress", state: { status: "pending" } }],
+            parts: [
+                {
+                    type: "tool",
+                    callID: "call-compress-1",
+                    tool: "compress",
+                    state: { status: "pending" },
+                },
+            ],
         }),
         // Compress result right after the anchor
         makeMessage({
             id: "compress-u3",
             role: "user",
-            parts: [{ type: "tool", callID: "call-compress-1", tool: "compress", state: { status: "completed", output: "ok" } }],
+            parts: [
+                {
+                    type: "tool",
+                    callID: "call-compress-1",
+                    tool: "compress",
+                    state: { status: "completed", output: "ok" },
+                },
+            ],
         }),
         makeAssistantText("a5", "continuing"),
     ]
@@ -340,7 +358,7 @@ test("block boundary: kind preserved (compress tool calls excluded from scan)", 
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Register block b0 at the compress call message
+    // Register checkpoint B001 at the compress call message
     const block: CompressionBlock = {
         blockId: 1,
         runId: 1,
@@ -350,8 +368,8 @@ test("block boundary: kind preserved (compress tool calls excluded from scan)", 
         summaryTokens: 100,
         durationMs: 0,
         topic: "test",
-        startId: "m00001",
-        endId: "m00004",
+        startId: "A001",
+        endId: "A004",
         anchorMessageId: "compress-a4",
         compressMessageId: "compress-a4",
         includedBlockIds: [],
@@ -371,13 +389,25 @@ test("block boundary: kind preserved (compress tool calls excluded from scan)", 
     state.prune.messages.activeByAnchorMessageId.set("compress-a4", 1)
     ctx.summaryByBlockId.set(1, block)
 
-    // Model compresses b1 → b1 (T2 distillation)
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "b1", "b1")
+    // Model compresses B001 → B001 (T2 distillation)
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "B001", "B001")
 
     // compress callID should NOT trigger extension
-    assert.equal(startReference.kind, "compressed-block", "startReference kind preserved for block boundary")
-    assert.equal(endReference.kind, "compressed-block", "endReference kind preserved for block boundary")
-    assert.equal(startReference.rawIndex, endReference.rawIndex, "block maps to single anchor index")
+    assert.equal(
+        startReference.kind,
+        "compressed-block",
+        "startReference kind preserved for block boundary",
+    )
+    assert.equal(
+        endReference.kind,
+        "compressed-block",
+        "endReference kind preserved for block boundary",
+    )
+    assert.equal(
+        startReference.rawIndex,
+        endReference.rawIndex,
+        "block maps to single anchor index",
+    )
 })
 
 test("compress tool excluded: message boundary with compress calls does not extend", () => {
@@ -388,13 +418,22 @@ test("compress tool excluded: message boundary with compress calls does not exte
         makeMessage({
             id: "a2-compress",
             role: "assistant",
-            parts: [{ type: "tool", callID: "call-c1", tool: "compress", state: { status: "pending" } }],
+            parts: [
+                { type: "tool", callID: "call-c1", tool: "compress", state: { status: "pending" } },
+            ],
         }),
         // Compress result right after — would match if compress wasn't excluded
         makeMessage({
             id: "u2-compress-result",
             role: "user",
-            parts: [{ type: "tool", callID: "call-c1", tool: "compress", state: { status: "completed", output: "done" } }],
+            parts: [
+                {
+                    type: "tool",
+                    callID: "call-c1",
+                    tool: "compress",
+                    state: { status: "completed", output: "done" },
+                },
+            ],
         }),
         makeAssistantText("a3", "continuing"),
     ]
@@ -402,11 +441,11 @@ test("compress tool excluded: message boundary with compress calls does not exte
     const ctx = makeContext(messages)
     const state = makeState(messages)
 
-    // Model compresses m00001–m00003 (u1, a1, a2-compress)
+    // Model compresses A001–A003 (u1, a1, a2-compress)
     // a2-compress has compress tool_use(call-c1), u2-compress-result has result
     // Without the compress exclusion: endIdx would extend to 3 (the result)
     // With exclusion: compress callID is skipped → no extension
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00003")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A003")
 
     assert.equal(endReference.rawIndex, 2, "endIdx unchanged — compress tool excluded from scan")
     assert.equal(startReference.rawIndex, 0, "startIdx unchanged")

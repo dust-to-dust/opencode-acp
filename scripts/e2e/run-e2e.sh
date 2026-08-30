@@ -79,7 +79,7 @@ mkdir -p "$FAKE_HOME/.config/opencode"
 ACP_DIST="$REPO_ROOT/dist"
 [[ -f "$ACP_DIST/index.js" ]] || fail "ACP dist not found at $ACP_DIST — run npm run build"
 
-# write_acp_config [output-path] [override-jsonc-string] — defaults disable all protection (legacy); scenarios override via "acpConfig" field
+# write_acp_config [output-path] [override-jsonc-string]
 write_acp_config() {
     local out="${1:-$FAKE_HOME/.config/opencode/acp.jsonc}"
     local override="${2:-}"
@@ -99,10 +99,6 @@ write_acp_config() {
         "maxContextLimit": 20000,
         "minContextLimit": 10000,
         "nudgeGrowthTokens": 6000
-    },
-    "qualityGate": {
-        "enabled": true,
-        "algorithm": "rouge-recall-v1"
     }
 }
 ACPJSON

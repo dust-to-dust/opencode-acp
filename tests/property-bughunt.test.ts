@@ -4,6 +4,7 @@ import fc from "fast-check"
 
 import type { CompressionBlock } from "../lib/state/types"
 import {
+    formatBlockRef,
     formatMessageRef,
     parseMessageRef,
     parseBoundaryId,
@@ -24,8 +25,9 @@ const noopLogger: Logger = {
 } as unknown as Logger
 
 function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
+    const blockId = overrides.blockId ?? 1
     return {
-        blockId: 1,
+        blockId,
         runId: 1,
         active: true,
         deactivatedByUser: false,
@@ -33,8 +35,10 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         summaryTokens: 100,
         durationMs: 0,
         topic: "test",
-        startId: "m00001",
-        endId: "m00005",
+        ref: formatBlockRef(blockId),
+        tier: 1,
+        startId: "A001",
+        endId: "A005",
         anchorMessageId: "msg-1",
         compressMessageId: "msg-compress",
         includedBlockIds: [],
@@ -108,14 +112,14 @@ function makeEmptyState(): SessionState {
     } as unknown as SessionState
 }
 
-test("MessageIDs property: bidirectional consistency after assignment", () => {
+test("activity refs remain bidirectionally consistent after assignment", () => {
     fc.assert(
         fc.property(
             fc.array(
                 fc.record({
-                    id: fc.string({ minLength: 1, maxLength: 50 }).filter(
-                        (s) => !s.startsWith("msg_dcp_"),
-                    ),
+                    id: fc
+                        .string({ minLength: 1, maxLength: 50 })
+                        .filter((s) => !s.startsWith("msg_dcp_")),
                     role: fc.constantFrom("user", "assistant"),
                 }),
                 { minLength: 1, maxLength: 50 },
@@ -141,7 +145,7 @@ test("MessageIDs property: bidirectional consistency after assignment", () => {
     )
 })
 
-test("MessageIDs: parse/format round-trip", () => {
+test("activity refs parse/format round-trip", () => {
     fc.assert(
         fc.property(fc.integer({ min: 1, max: 99999 }), (index) => {
             assert.equal(parseMessageRef(formatMessageRef(index)), index)
@@ -150,15 +154,31 @@ test("MessageIDs: parse/format round-trip", () => {
     )
 })
 
-test("MessageIDs: parseBoundaryId edge cases", () => {
-    assert.notEqual(parseBoundaryId("m00001"), null)
-    assert.notEqual(parseBoundaryId("m99999"), null)
-    assert.notEqual(parseBoundaryId("b1"), null)
-    assert.equal(parseBoundaryId("m0"), null)
-    assert.equal(parseBoundaryId("b0"), null)
+test("activity and checkpoint boundary refs parse canonical forms", () => {
+    assert.deepEqual(parseBoundaryId("A001"), {
+        kind: "message",
+        ref: "A001",
+        index: 1,
+    })
+    assert.deepEqual(parseBoundaryId("A99999"), {
+        kind: "message",
+        ref: "A99999",
+        index: 99999,
+    })
+    assert.deepEqual(parseBoundaryId("B001"), {
+        kind: "compressed-block",
+        ref: "B001",
+        blockId: 1,
+    })
+    assert.deepEqual(parseBoundaryId("C042"), {
+        kind: "compressed-block",
+        ref: "C042",
+        blockId: 42,
+    })
+    assert.equal(parseBoundaryId("A000"), null)
     assert.equal(parseBoundaryId(""), null)
     assert.equal(parseBoundaryId("xyz"), null)
-    assert.equal(parseBoundaryId("m100000"), null)
+    assert.equal(parseBoundaryId("A100000"), null)
 })
 
 test("Sync: consumed blocks become inactive, consumer stays active", () => {
@@ -171,6 +191,7 @@ test("Sync: consumed blocks become inactive, consumer stays active", () => {
             makeBlock({
                 blockId: i,
                 anchorMessageId: `msg-${i}`,
+                compressMessageId: `compress-${i}`,
                 consumedBlockIds: i > 1 ? [i - 1] : [],
                 createdAt: 1000 + i,
                 active: true,
@@ -182,6 +203,7 @@ test("Sync: consumed blocks become inactive, consumer stays active", () => {
     const messages: WithParts[] = []
     for (let i = 1; i <= numBlocks; i++) {
         messages.push(makeMessage(`msg-${i}`))
+        messages.push(makeMessage(`compress-${i}`, "assistant"))
     }
 
     syncCompressionBlocks(state, noopLogger, messages)
@@ -235,10 +257,7 @@ test("Sync: self-consuming block doesn't crash", () => {
 
 test("Sync: empty messages array doesn't crash", () => {
     const state = makeEmptyState()
-    state.prune.messages.blocksById.set(
-        1,
-        makeBlock({ blockId: 1, anchorMessageId: "msg-1" }),
-    )
+    state.prune.messages.blocksById.set(1, makeBlock({ blockId: 1, anchorMessageId: "msg-1" }))
     state.prune.messages.activeBlockIds.add(1)
 
     syncCompressionBlocks(state, noopLogger, [])

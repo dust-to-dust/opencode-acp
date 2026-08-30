@@ -37,6 +37,7 @@ test("saveSessionState writes JSON file to disk", async () => {
     const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
     assert.ok(existsSync(filePath), "state file should exist")
     const content = JSON.parse(await fs.readFile(filePath, "utf-8"))
+    assert.equal(content.schemaVersion, 3)
     assert.equal(content.stats.totalPruneTokens, 500)
     await cleanup()
 })
@@ -92,7 +93,11 @@ test("loadSessionState returns null for missing required fields", async () => {
     await cleanup()
     const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
     await fs.mkdir(STORAGE_DIR, { recursive: true })
-    await fs.writeFile(filePath, JSON.stringify({ someField: "no prune/stats" }), "utf-8")
+    await fs.writeFile(
+        filePath,
+        JSON.stringify({ schemaVersion: 3, someField: "no prune/stats" }),
+        "utf-8",
+    )
 
     const result = await loadSessionState(TEST_SESSION, logger)
     assert.equal(result, null, "missing required fields should return null")
@@ -104,7 +109,8 @@ test("loadSessionState deduplicates malformed anchor entries", async () => {
     const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
     await fs.mkdir(STORAGE_DIR, { recursive: true })
     const state = {
-        prune: { tools: {}, messages: { byMessageId: {}, blocksById: {} } },
+        schemaVersion: 3,
+        prune: { messages: { byMessageId: {}, blocksById: {} } },
         nudges: {
             contextLimitAnchors: ["a", "a", "b", 123 as any, null as any],
             turnNudgeAnchors: ["x", "x"],
@@ -125,42 +131,48 @@ test("loadSessionState deduplicates malformed anchor entries", async () => {
     await cleanup()
 })
 
-test("loadSessionState tolerates legacy prune.tools field (Bug 38 backward-compat)", async () => {
-    // Pre-1.14.1 state files had a `prune.tools` Map (Record<string, number>) used by
-    // the now-removed deduplication/purgeErrors strategies. Loading such a file must
-    // not fail — the tools field is silently ignored and only `prune.messages` is
-    // carried forward into the live SessionState.
+test("loadSessionState rejects state with a missing schema version", async () => {
     await cleanup()
     const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
     await fs.mkdir(STORAGE_DIR, { recursive: true })
-    const legacyState = {
+    const stateWithoutSchema = {
         prune: {
-            tools: { "call-1": 100, "call-2": 250 },
             messages: {
-                byMessageId: {
-                    m1: { tokenCount: 50, allBlockIds: [0], activeBlockIds: [0] },
-                },
+                byMessageId: {},
                 blocksById: {},
                 activeBlockIds: [],
                 activeByAnchorMessageId: {},
-                nextBlockId: 1,
+                nextBlockId: 0,
                 nextRunId: 1,
             },
         },
         nudges: { contextLimitAnchors: ["a"] },
-        stats: { pruneTokenCounter: 0, totalPruneTokens: 350 },
+        stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
         lastUpdated: new Date().toISOString(),
     }
-    await fs.writeFile(filePath, JSON.stringify(legacyState), "utf-8")
+    await fs.writeFile(filePath, JSON.stringify(stateWithoutSchema), "utf-8")
 
     const loaded = await loadSessionState(TEST_SESSION, logger)
 
-    assert.ok(loaded, "load must succeed for legacy state with prune.tools")
-    assert.ok(loaded!.prune.messages, "loaded state has prune.messages")
-    assert.deepEqual(
-        loaded!.prune.messages!.byMessageId.m1,
-        { tokenCount: 50, allBlockIds: [0], activeBlockIds: [0] },
-        "prune.messages round-trips intact",
-    )
+    assert.equal(loaded, null, "schema-less state must be rejected")
+    await cleanup()
+})
+
+test("loadSessionState rejects state with an old schema version", async () => {
+    await cleanup()
+    const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
+    await fs.mkdir(STORAGE_DIR, { recursive: true })
+    const oldState = {
+        schemaVersion: 2,
+        prune: { messages: { byMessageId: {}, blocksById: {} } },
+        nudges: { contextLimitAnchors: ["a"] },
+        stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
+        lastUpdated: new Date().toISOString(),
+    }
+    await fs.writeFile(filePath, JSON.stringify(oldState), "utf-8")
+
+    const loaded = await loadSessionState(TEST_SESSION, logger)
+
+    assert.equal(loaded, null, "schema version 2 state must be rejected")
     await cleanup()
 })

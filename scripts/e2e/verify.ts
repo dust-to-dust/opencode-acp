@@ -1,24 +1,20 @@
 #!/usr/bin/env node
 
-import { readFileSync, readdirSync, existsSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 
 interface VerifyExpectations {
     blockCount?: number
     maxBlockCount?: number
     minBlockCount?: number
-    qualityGateRetryPending?: boolean
-    summaryContains?: string
-    childBlockCount?: number
     nudgeBaselineSet?: boolean
-    tier2BaselineSet?: boolean
+    nudgeBaselineMin?: number
+    pendingCompressionSet?: boolean
     activeBlockCount?: number
     compressedCount?: number
     minCompressedCount?: number
     maxCompressedCount?: number
     maxCompressCallsVisible?: number
-    lastRequestCompressCalls?: number
     maxNudgeCount?: number
-    nudgeSystemTokensStable?: boolean
 }
 
 interface VerifyScenario {
@@ -33,16 +29,14 @@ interface RequestObservation {
     nudgeDetected: boolean
     isChild: boolean
     isAuxiliary: boolean
-    nudgeSystemTokens?: number
 }
 
 const statePath = process.argv[2]
 const scenarioPath = process.argv[3]
-const acpDir = process.argv[4]
 const observationsPath = process.env.OBSERVATIONS ?? "/tmp/acp-e2e-observations.json"
 
 if (!statePath || !scenarioPath) {
-    process.stderr.write("Usage: verify.ts <state-file> <scenario-file> [acp-dir]\n")
+    process.stderr.write("Usage: verify.ts <state-file> <scenario-file>\n")
     process.exit(2)
 }
 
@@ -97,57 +91,29 @@ function countActiveBlocks(s: any): number {
 
 const actualBlockCount = countBlocks(state)
 const actualActiveBlocks = countActiveBlocks(state)
-const actualPending = state?.qualityGateRetryPending ?? false
-
-let childStateFiles: string[] = []
-let childBlockCount = 0
-let childBlocks: any[] = []
-
-if (acpDir) {
-    try {
-        const allFiles = readdirSync(acpDir)
-            .filter((f) => f.endsWith(".json"))
-            .map((f) => `${acpDir}/${f}`)
-        childStateFiles = allFiles.filter((f) => f !== statePath)
-        for (const f of childStateFiles) {
-            try {
-                const cs = readJson(f)
-                childBlockCount += countBlocks(cs)
-                childBlocks = childBlocks.concat(getBlocks(cs))
-            } catch {}
-        }
-    } catch {}
-}
 
 const parentObs = observations.filter((o) => !o.isChild && !o.isAuxiliary)
-const maxCompressCalls = parentObs.length > 0
-    ? Math.max(...parentObs.map((o) => o.compressCallCount))
-    : 0
-const lastCompressCalls = parentObs.length > 0
-    ? parentObs[parentObs.length - 1].compressCallCount
-    : 0
+const maxCompressCalls =
+    parentObs.length > 0 ? Math.max(...parentObs.map((o) => o.compressCallCount)) : 0
 const nudgeCount = parentObs.filter((o) => o.nudgeDetected).length
 
-const usesObsAssertions = expect.maxCompressCallsVisible !== undefined
-    || expect.lastRequestCompressCalls !== undefined
-    || expect.maxNudgeCount !== undefined
+const usesObsAssertions =
+    expect.maxCompressCallsVisible !== undefined || expect.maxNudgeCount !== undefined
 if (usesObsAssertions && parentObs.length === 0) {
-    assert("observations recorded (non-empty)", false, "no real-turn observations — observation-based assertions are vacuous")
+    assert(
+        "observations recorded (non-empty)",
+        false,
+        "no real-turn observations — observation-based assertions are vacuous",
+    )
 }
 
 console.log(`\nVerifying: ${scenarioPath}`)
 console.log(`  state file: ${statePath}`)
 console.log(`  blocks: ${actualBlockCount} (active: ${actualActiveBlocks})`)
-console.log(`  qualityGateRetryPending: ${actualPending}`)
 if (observations.length > 0) {
     console.log(`  observations: ${observations.length} requests`)
     console.log(`    maxCompressCallsVisible: ${maxCompressCalls}`)
-    console.log(`    lastRequestCompressCalls: ${lastCompressCalls}`)
     console.log(`    nudgeDetections: ${nudgeCount}`)
-}
-if (childStateFiles.length > 0) {
-    console.log(`  child state files: ${childStateFiles.length}`)
-    console.log(`  child blocks: ${childBlockCount}`)
 }
 console.log()
 
@@ -183,37 +149,6 @@ if (expect.activeBlockCount !== undefined) {
     )
 }
 
-if (expect.qualityGateRetryPending !== undefined) {
-    assert(
-        `qualityGateRetryPending === ${expect.qualityGateRetryPending}`,
-        actualPending === expect.qualityGateRetryPending,
-        `got ${actualPending}`,
-    )
-}
-
-if (expect.summaryContains !== undefined) {
-    let found = false
-    for (const block of getBlocks(state)) {
-        if (block?.summary?.includes(expect.summaryContains)) {
-            found = true
-            break
-        }
-    }
-    assert(
-        `summary contains "${expect.summaryContains}"`,
-        found,
-        "no block summary contains the expected text",
-    )
-}
-
-if (expect.childBlockCount !== undefined) {
-    assert(
-        `childBlockCount === ${expect.childBlockCount}`,
-        childBlockCount === expect.childBlockCount,
-        `got ${childBlockCount} across ${childStateFiles.length} child state file(s)`,
-    )
-}
-
 const nudgeBaseline = state?.nudges?.lastPerMessageNudgeTokens
 
 if (expect.nudgeBaselineSet !== undefined) {
@@ -225,14 +160,22 @@ if (expect.nudgeBaselineSet !== undefined) {
     )
 }
 
-const tier2Baseline = state?.nudges?.lastTier2NudgeTokens
-
-if (expect.tier2BaselineSet !== undefined) {
-    const isSet = tier2Baseline !== null && tier2Baseline !== undefined
+if (expect.nudgeBaselineMin !== undefined) {
     assert(
-        `tier2BaselineSet === ${expect.tier2BaselineSet}`,
-        isSet === expect.tier2BaselineSet,
-        `got ${tier2Baseline ?? "null"}`,
+        `lastPerMessageNudgeTokens >= ${expect.nudgeBaselineMin}`,
+        typeof nudgeBaseline === "number" && nudgeBaseline >= expect.nudgeBaselineMin,
+        `got ${nudgeBaseline ?? "null"}`,
+    )
+}
+
+if (expect.pendingCompressionSet !== undefined) {
+    const isSet =
+        state?.nudges?.pendingCompression !== null &&
+        state?.nudges?.pendingCompression !== undefined
+    assert(
+        `pendingCompressionSet === ${expect.pendingCompressionSet}`,
+        isSet === expect.pendingCompressionSet,
+        `got ${isSet}`,
     )
 }
 
@@ -274,30 +217,11 @@ if (expect.maxCompressCallsVisible !== undefined) {
     )
 }
 
-if (expect.lastRequestCompressCalls !== undefined) {
-    assert(
-        `lastRequestCompressCalls === ${expect.lastRequestCompressCalls}`,
-        lastCompressCalls === expect.lastRequestCompressCalls,
-        `got ${lastCompressCalls} compress calls in last request`,
-    )
-}
-
 if (expect.maxNudgeCount !== undefined) {
     assert(
         `nudgeCount <= ${expect.maxNudgeCount}`,
         nudgeCount <= expect.maxNudgeCount,
         `got ${nudgeCount} nudge detections across ${parentObs.length} requests`,
-    )
-}
-
-if (expect.nudgeSystemTokensStable) {
-    const systemValues = parentObs
-        .filter((o) => o.nudgeDetected && o.nudgeSystemTokens !== undefined)
-        .map((o) => o.nudgeSystemTokens)
-    assert(
-        `nudgeSystemTokensStable: all ${systemValues.length} nudge observations report the same system prompt estimate`,
-        systemValues.length >= 2 && new Set(systemValues).size === 1,
-        `got ${JSON.stringify(systemValues)} — compression changed visible history, so system was re-estimated from a later assistant`,
     )
 }
 

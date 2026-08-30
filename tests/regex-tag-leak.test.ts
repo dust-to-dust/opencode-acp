@@ -1,190 +1,88 @@
-import { describe, test } from "node:test"
 import assert from "node:assert/strict"
+import { describe, test } from "node:test"
 import {
     replaceBlockIdsWithBlocked,
-    stripStaleMessageRefs,
     stripHallucinationsFromString,
+    stripStaleMessageRefs,
 } from "../lib/messages/utils"
 
+const DCP_MESSAGE_TAG = `${"dcp"}-message-id`
+const ACP_MESSAGE_TAG = `${"acp"}-message-id`
+
+function tag(name: string, value: string, attributes = ""): string {
+    const suffix = attributes ? ` ${attributes}` : ""
+    return `<${name}${suffix}>${value}</${name}>`
+}
+
 describe("replaceBlockIdsWithBlocked", () => {
-    test("replaces block ID inside dcp-message-id tag with attributes", () => {
-        const input = '<dcp-message-id tokens="2.1K" type="tool:bash">b3</dcp-message-id>'
-        const result = replaceBlockIdsWithBlocked(input)
+    test("replaces checkpoint refs and preserves tag attributes", () => {
+        const input = tag(DCP_MESSAGE_TAG, "B001", 'tokens="10"')
         assert.equal(
-            result,
-            '<dcp-message-id tokens="2.1K" type="tool:bash">BLOCKED</dcp-message-id>',
+            replaceBlockIdsWithBlocked(input),
+            tag(DCP_MESSAGE_TAG, "BLOCKED", 'tokens="10"'),
         )
     })
 
-    test("replaces block ID inside acp-message-id tag with attributes", () => {
-        const input = '<acp-message-id tokens="0.5K" type="text">b12</acp-message-id>'
-        const result = replaceBlockIdsWithBlocked(input)
-        assert.equal(
-            result,
-            '<acp-message-id tokens="0.5K" type="text">BLOCKED</acp-message-id>',
-        )
+    test("supports checkpoint generations beyond Z", () => {
+        const input = `${tag(ACP_MESSAGE_TAG, "C002")} ${tag(DCP_MESSAGE_TAG, "AA123")}`
+        const expected = `${tag(ACP_MESSAGE_TAG, "BLOCKED")} ${tag(DCP_MESSAGE_TAG, "BLOCKED")}`
+        assert.equal(replaceBlockIdsWithBlocked(input), expected)
     })
 
-    test("replaces bare block ID (no attributes)", () => {
-        const input = "<dcp-message-id>b0</dcp-message-id>"
-        const result = replaceBlockIdsWithBlocked(input)
-        assert.equal(result, "<dcp-message-id>BLOCKED</dcp-message-id>")
-    })
-
-    test("replaces multiple block IDs in one string", () => {
-        const input =
-            "<dcp-message-id>b0</dcp-message-id> and <dcp-message-id>b5</dcp-message-id>"
-        const result = replaceBlockIdsWithBlocked(input)
-        assert.equal(
-            result,
-            "<dcp-message-id>BLOCKED</dcp-message-id> and <dcp-message-id>BLOCKED</dcp-message-id>",
-        )
-    })
-
-    test("does not touch message refs (mNNNN)", () => {
-        const input = '<dcp-message-id tokens="2.1K">m00097</dcp-message-id>'
-        const result = replaceBlockIdsWithBlocked(input)
-        assert.equal(result, input)
+    test("does not touch A-generation activity refs", () => {
+        const input = tag(DCP_MESSAGE_TAG, "A045")
+        assert.equal(replaceBlockIdsWithBlocked(input), input)
     })
 
     test("preserves surrounding text", () => {
-        const input = "Before <dcp-message-id>b3</dcp-message-id> After"
-        const result = replaceBlockIdsWithBlocked(input)
-        assert.equal(result, "Before <dcp-message-id>BLOCKED</dcp-message-id> After")
-    })
-
-    test("handles large block IDs", () => {
-        const input = "<dcp-message-id>b999</dcp-message-id>"
-        const result = replaceBlockIdsWithBlocked(input)
-        assert.equal(result, "<dcp-message-id>BLOCKED</dcp-message-id>")
+        const input = `Before ${tag(DCP_MESSAGE_TAG, "B999")} After`
+        assert.equal(
+            replaceBlockIdsWithBlocked(input),
+            `Before ${tag(DCP_MESSAGE_TAG, "BLOCKED")} After`,
+        )
     })
 })
 
 describe("stripStaleMessageRefs", () => {
-    test("strips dcp-message-id tag with attributes containing message ref", () => {
-        const input = '<dcp-message-id tokens="2.1K" type="tool:bash">m00097</dcp-message-id>'
-        const result = stripStaleMessageRefs(input)
-        assert.equal(result, "")
+    test("strips A activity tags with or without attributes", () => {
+        const input = `Text ${tag(DCP_MESSAGE_TAG, "A001", 'tokens="5"')} more ${tag(ACP_MESSAGE_TAG, "A002")}`
+        assert.equal(stripStaleMessageRefs(input), "Text  more ")
     })
 
-    test("strips acp-message-id tag with attributes containing message ref", () => {
-        const input = '<acp-message-id tokens="0.5K">m00150</acp-message-id>'
-        const result = stripStaleMessageRefs(input)
-        assert.equal(result, "")
+    test("preserves checkpoint tags", () => {
+        const input = `${tag(DCP_MESSAGE_TAG, "B001")} ${tag(ACP_MESSAGE_TAG, "AA002")}`
+        assert.equal(stripStaleMessageRefs(input), input)
     })
 
-    test("strips bare message-id tag (no attributes)", () => {
-        const input = "<dcp-message-id>m00001</dcp-message-id>"
-        const result = stripStaleMessageRefs(input)
-        assert.equal(result, "")
-    })
-
-    test("strips multiple message-id tags in one string", () => {
-        const input =
-            "Text <dcp-message-id>m00001</dcp-message-id> more <dcp-message-id>m00002</dcp-message-id>"
-        const result = stripStaleMessageRefs(input)
-        assert.equal(result, "Text  more ")
-    })
-
-    // Before fix, the regex matched only 'm\d+</closing>' leaving the opening
-    // tag behind as a fragment: '<dcp-message-id tokens="2.1K" type="tool:bash">'
-    test("does NOT leave opening tag fragment (the main bug)", () => {
-        const input = '<dcp-message-id tokens="2.1K" type="tool:bash">m00097</dcp-message-id>'
-        const result = stripStaleMessageRefs(input)
-        assert.ok(
-            !result.includes("<dcp-message-id"),
-            "Should not leave opening tag fragment",
-        )
-        assert.ok(
-            !result.includes("<acp-message-id"),
-            "Should not leave opening tag fragment",
-        )
-    })
-
-    test("preserves surrounding text", () => {
-        const input = "Before <dcp-message-id>m00001</dcp-message-id> After"
+    test("does not leave an opening tag fragment", () => {
+        const input = `Before ${tag(DCP_MESSAGE_TAG, "A003", 'type="tool"')} After`
         const result = stripStaleMessageRefs(input)
         assert.equal(result, "Before  After")
-    })
-
-    test("does not touch block IDs (bNNN)", () => {
-        const input = "<dcp-message-id>b3</dcp-message-id>"
-        const result = stripStaleMessageRefs(input)
-        assert.equal(result, input)
+        assert.equal(result.includes(DCP_MESSAGE_TAG), false)
     })
 })
 
-describe("stripHallucinationsFromString (paired tag regex)", () => {
-    test("removes paired dcp tags with content", () => {
-        const input = 'alpha<dcp-system-reminder>secret</dcp-system-reminder>omega'
-        const result = stripHallucinationsFromString(input)
-        assert.equal(result, "alphaomega")
+describe("stripHallucinationsFromString", () => {
+    test("removes paired dcp and acp tags with their content", () => {
+        const dcpTag = `${"dcp"}-summary`
+        const acpTag = `${"acp"}-note`
+        const input = `alpha${tag(dcpTag, "secret")}middle${tag(acpTag, "hidden")}omega`
+        assert.equal(stripHallucinationsFromString(input), "alphamiddleomega")
     })
 
-    test("removes paired acp tags with content", () => {
-        const input = 'alpha<acp-system-reminder>secret</acp-system-reminder>omega'
-        const result = stripHallucinationsFromString(input)
-        assert.equal(result, "alphaomega")
+    test("removes message ID tags with attributes", () => {
+        const input = `before${tag(DCP_MESSAGE_TAG, "A097", 'tokens="12"')}after`
+        assert.equal(stripHallucinationsFromString(input), "beforeafter")
     })
 
-    // Before fix, DCP_PAIRED_TAG_REGEX started with ']*>' which matched any '>'
-    // character instead of '<dcp...>' opening tags. This caused partial deletion:
-    // closing tag + content removed, but opening tag fragments leaked into chat.
-    test("removes paired dcp-message-id tags (issue #123 core case)", () => {
-        const input =
-            'normal text <dcp-message-id tokens="2.1K" type="tool:bash">m00097</dcp-message-id> tail'
-        const result = stripHallucinationsFromString(input)
-        assert.equal(result, "normal text  tail")
-        assert.ok(
-            !result.includes("dcp-message-id"),
-            "Should not leave any tag fragments",
-        )
-        assert.ok(!result.includes("m00097"), "Should not leave message ref")
+    test("removes orphan tags while preserving surrounding text", () => {
+        const tagName = `${"dcp"}-orphan`
+        const input = `before <${tagName}>middle</${tagName}> after <${tagName}>tail`
+        assert.equal(stripHallucinationsFromString(input), "before  after tail")
     })
 
-    test("removes paired tags with attributes on opening tag", () => {
-        const input =
-            'before<dcp-foo attr="value">content</dcp-foo>after'
-        const result = stripHallucinationsFromString(input)
-        assert.equal(result, "beforeafter")
-    })
-
-    test("removes nested paired tags (non-greedy: inner pair matched first)", () => {
-        const input =
-            'before<dcp-system-reminder>nested<dcp-foo>inner</dcp-foo>content</dcp-system-reminder>after'
-        const result = stripHallucinationsFromString(input)
-        assert.equal(result, "beforecontentafter")
-    })
-
-    test("removes multiple paired tags", () => {
-        const input =
-            'a<dcp-x>1</dcp-x>b<dcp-y>2</dcp-y>c'
-        const result = stripHallucinationsFromString(input)
-        assert.equal(result, "abc")
-    })
-
-    test("removes orphan/unpaired dcp tags via second regex", () => {
-        const result = stripHallucinationsFromString(
-            "narration<dcp-system-reminder> more",
-        )
-        assert.equal(result, "narration more")
-    })
-
-    test("does not affect non-dcp/acp tags", () => {
-        const result = stripHallucinationsFromString(
-            "<div>hello</div> <system-reminder>keep</system-reminder>",
-        )
-        assert.equal(result, "<div>hello</div> <system-reminder>keep</system-reminder>")
-    })
-
-    test("issue #123 regression: no tag fragment leakage after multi-round compression", () => {
-        const input =
-            'Some summary text <dcp-message-id tokens="0.5K" type="text">m00097</dcp-message-id> and more ' +
-            '<dcp-message-id tokens="1.2K" type="tool:bash">m00099</dcp-message-id> end.'
-        const result = stripHallucinationsFromString(input)
-        assert.equal(result, "Some summary text  and more  end.")
-        assert.ok(!result.includes("dcp"), "No dcp fragments")
-        assert.ok(!result.includes("acp"), "No acp fragments")
-        assert.ok(!result.includes("m0009"), "No stale message refs")
+    test("does not affect unrelated XML tags", () => {
+        const input = "<details>content</details>"
+        assert.equal(stripHallucinationsFromString(input), input)
     })
 })

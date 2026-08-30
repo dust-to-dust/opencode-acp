@@ -11,11 +11,12 @@ import type {
 } from "../lib/state/types"
 import { resolveCompressionTarget } from "../lib/commands/compression-targets"
 import { findActiveAncestorBlockId } from "../lib/compress/decompress-logic"
+import { formatBlockRef } from "../lib/message-ids"
 
 const SID = "session-inactive-decompress-e2e"
 
 function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
-    return {
+    const block: CompressionBlock = {
         blockId: 1,
         runId: 1,
         active: true,
@@ -26,8 +27,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         mode: "range",
         topic: "test",
         batchTopic: "test",
-        startId: "m00001",
-        endId: "m00003",
+        startId: "A001",
+        endId: "A003",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -44,8 +45,11 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         summary: "Compressed conversation about topic X.",
         survivedCount: 0,
         generation: "young",
+        tier: 1,
         ...overrides,
     }
+    block.ref = formatBlockRef(block.blockId, block.tier ?? 1)
+    return block
 }
 
 function makeState(blocks: CompressionBlock[], activeIds: number[]): SessionState {
@@ -119,10 +123,7 @@ function makeRunContext(): { ask: any; metadata: any; sessionID: string } {
     }
 }
 
-async function runDecompress(
-    state: SessionState,
-    args: Record<string, unknown>,
-): Promise<string> {
+async function runDecompress(state: SessionState, args: Record<string, unknown>): Promise<string> {
     const ctx = makeToolContext(state)
     const tool = createDecompressTool(ctx)
     return tool.execute(args as any, makeRunContext() as any)
@@ -150,21 +151,33 @@ test("resolveCompressionTarget returns null for non-existent block", () => {
 test("E2E: decompress tool succeeds for standalone inactive block", async () => {
     const inactiveBlock = makeBlock({
         blockId: 5,
+        tier: 4,
         active: false,
         deactivatedByUser: false,
         parentBlockIds: [],
     })
     const state = makeState([inactiveBlock], [])
 
-    const result = await runDecompress(state, { blockId: "b5" })
+    const result = await runDecompress(state, { blockId: inactiveBlock.ref })
 
     assert.ok(!result.includes("not active"), `should not reject: ${result}`)
     assert.ok(!result.includes("Error"), `should not error: ${result}`)
     assert.match(result, /Decompressed/)
 })
 
-test("E2E: decompress tool redirects for consumed block with active parent", async () => {
-    const activeParent = makeBlock({ blockId: 10, active: true })
+test("E2E: decompress rejects the right numeric ID with the wrong generation", async () => {
+    const inactiveBlock = makeBlock({ blockId: 5, tier: 26, active: false })
+    const state = makeState([inactiveBlock], [])
+
+    assert.equal(inactiveBlock.ref, "AA005")
+    assert.equal(
+        await runDecompress(state, { blockId: "Z005" }),
+        "Error: Checkpoint Z005 does not exist.",
+    )
+})
+
+test("E2E: decompress tool redirects for consumed checkpoint with active parent", async () => {
+    const activeParent = makeBlock({ blockId: 10, tier: 2, active: true })
     const consumedBlock = makeBlock({
         blockId: 5,
         active: false,
@@ -172,17 +185,17 @@ test("E2E: decompress tool redirects for consumed block with active parent", asy
     })
     const state = makeState([activeParent, consumedBlock], [10])
 
-    const result = await runDecompress(state, { blockId: "b5" })
+    const result = await runDecompress(state, { blockId: consumedBlock.ref })
 
-    assert.match(result, /nested inside active block/)
-    assert.match(result, /Decompress block 10 first/)
+    assert.match(result, /Checkpoint B005 is nested inside active checkpoint C010/)
+    assert.match(result, /Decompress the active checkpoint first/)
 })
 
 test("E2E: decompress tool works normally for active block", async () => {
     const activeBlock = makeBlock({ blockId: 1, active: true })
     const state = makeState([activeBlock], [1])
 
-    const result = await runDecompress(state, { blockId: "b1" })
+    const result = await runDecompress(state, { blockId: activeBlock.ref })
 
     assert.ok(!result.includes("Error"), `should not error: ${result}`)
     assert.match(result, /Decompressed/)
@@ -193,22 +206,20 @@ test("E2E: decompress tool works normally for active block", async () => {
 test("E2E: toFile on inactive block writes block summary", async () => {
     const inactiveBlock = makeBlock({
         blockId: 5,
+        tier: 8,
         active: false,
         summary: "Important compressed content about feature X.",
     })
     const state = makeState([inactiveBlock], [])
 
     const result = await runDecompress(state, {
-        blockId: "b5",
+        blockId: inactiveBlock.ref,
         toFile: "/tmp/test-inactive-block-decompress.txt",
     })
 
     assert.ok(!result.includes("Error"), `should not error: ${result}`)
     assert.match(result, /written to/)
-    assert.ok(
-        !result.includes("(no content available)"),
-        `should not write placeholder: ${result}`,
-    )
+    assert.ok(!result.includes("(no content available)"), `should not write placeholder: ${result}`)
 
     const { readFileSync } = await import("fs")
     const fileContent = readFileSync("/tmp/test-inactive-block-decompress.txt", "utf-8")
@@ -220,12 +231,14 @@ test("E2E: toFile on inactive block writes block summary", async () => {
 test("E2E: decompress succeeds when all ancestor chain is inactive", async () => {
     const grandchild = makeBlock({
         blockId: 3,
+        tier: 1,
         active: false,
         parentBlockIds: [2],
         summary: "Innermost block summary.",
     })
     const child = makeBlock({
         blockId: 2,
+        tier: 2,
         active: false,
         parentBlockIds: [1],
         consumedBlockIds: [3],
@@ -233,6 +246,7 @@ test("E2E: decompress succeeds when all ancestor chain is inactive", async () =>
     })
     const parent = makeBlock({
         blockId: 1,
+        tier: 3,
         active: false,
         consumedBlockIds: [2],
         summary: "Outermost block summary.",
@@ -245,7 +259,7 @@ test("E2E: decompress succeeds when all ancestor chain is inactive", async () =>
     } as any)
     assert.equal(ancestorId, null, "no active ancestor in fully-inactive chain")
 
-    const result = await runDecompress(state, { blockId: "b3" })
+    const result = await runDecompress(state, { blockId: grandchild.ref })
     assert.ok(!result.includes("Error"), `should not error: ${result}`)
     assert.match(result, /Decompressed/)
 })

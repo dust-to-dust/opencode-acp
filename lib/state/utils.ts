@@ -8,6 +8,7 @@ import type {
 import { isIgnoredUserMessage, messageHasCompress } from "../messages/query"
 import { isMessageWithInfo } from "../messages/shape"
 import { countTokens } from "../token-utils"
+import { formatBlockRef } from "../message-ids"
 
 // [FIX Bug 3] Added summary check to match getCurrentTokenUsage exclusion logic
 export const isMessageCompacted = (state: SessionState, msg: WithParts): boolean => {
@@ -184,6 +185,15 @@ export function loadPruneMessagesState(
 
             state.blocksById.set(blockId, {
                 blockId,
+                ref:
+                    typeof block.ref === "string"
+                        ? block.ref
+                        : formatBlockRef(
+                              blockId,
+                              typeof block.tier === "number" && block.tier >= 1
+                                  ? Math.floor(block.tier)
+                                  : 1,
+                          ),
                 runId:
                     typeof block.runId === "number" &&
                     Number.isInteger(block.runId) &&
@@ -192,8 +202,7 @@ export function loadPruneMessagesState(
                         : blockId,
                 active: block.active === true,
                 deactivatedByUser: block.deactivatedByUser === true,
-                deactivatedByUserDeep:
-                    block.deactivatedByUserDeep === true ? true : undefined,
+                deactivatedByUserDeep: block.deactivatedByUserDeep === true ? true : undefined,
                 compressedTokens:
                     typeof block.compressedTokens === "number" &&
                     Number.isFinite(block.compressedTokens)
@@ -250,7 +259,9 @@ export function loadPruneMessagesState(
                         ? block.generation
                         : undefined,
                 tier:
-                    block.tier === 1 || block.tier === 2 || block.tier === 3
+                    typeof block.tier === "number" &&
+                    Number.isInteger(block.tier) &&
+                    block.tier >= 1
                         ? block.tier
                         : undefined,
                 effectiveCompressedTokens:
@@ -360,9 +371,11 @@ export function getActiveSummaryTokenUsage(
     return total
 }
 
-export function getTierTokenUsage(
-    state: SessionState,
-): { tier1Tokens: number; tier2Tokens: number; tier3Tokens: number } {
+export function getTierTokenUsage(state: SessionState): {
+    tier1Tokens: number
+    tier2Tokens: number
+    tier3Tokens: number
+} {
     let tier1Tokens = 0
     let tier2Tokens = 0
     let tier3Tokens = 0
@@ -397,6 +410,7 @@ export function resetOnCompaction(state: SessionState): void {
         shouldInjectThisTurn: undefined,
         compressBaselineSet: false,
         lastProcessedCompressMessageId: undefined,
+        pendingCompression: undefined,
     }
     // [FIX] Reset message IDs on compaction — old mappings are stale after
     // compaction replaces messages with a summary. Keeping them causes

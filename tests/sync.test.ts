@@ -17,8 +17,8 @@ function makeBlock(overrides: Partial<CompressionBlock> & { blockId: number }): 
         summaryTokens: 50,
         durationMs: 0,
         topic: "test",
-        startId: "m1",
-        endId: "m2",
+        startId: "A001",
+        endId: "A002",
         anchorMessageId: "anchor-1",
         compressMessageId: "compress-1",
         includedBlockIds: [],
@@ -58,7 +58,7 @@ test("syncCompressionBlocks is a no-op when no blocks exist", () => {
 test("syncCompressionBlocks keeps block active when anchor message exists", () => {
     const state = createSessionState()
     state.prune.messages.blocksById.set(1, makeBlock({ blockId: 1, anchorMessageId: "m1" }))
-    const messages = [userMsg("m1"), userMsg("m2")]
+    const messages = [userMsg("m1"), userMsg("m2"), userMsg("compress-1")]
     syncCompressionBlocks(state, logger, messages)
     assert.ok(state.prune.messages.activeBlockIds.has(1), "block should be active")
     assert.equal(state.prune.messages.activeByAnchorMessageId.get("m1"), 1)
@@ -67,7 +67,7 @@ test("syncCompressionBlocks keeps block active when anchor message exists", () =
 test("syncCompressionBlocks keeps block active when anchor message is deleted", () => {
     const state = createSessionState()
     state.prune.messages.blocksById.set(1, makeBlock({ blockId: 1, anchorMessageId: "m1" }))
-    const messages = [userMsg("m2")]
+    const messages = [userMsg("m2"), userMsg("compress-1")]
     syncCompressionBlocks(state, logger, messages)
     const block = state.prune.messages.blocksById.get(1)!
     assert.equal(block.active, true, "block should stay active — existence IS proof")
@@ -83,14 +83,10 @@ test("syncCompressionBlocks keeps block active when anchor is gone even if track
         allBlockIds: [1],
         activeBlockIds: [1],
     })
-    const messages = [userMsg("m2")]
+    const messages = [userMsg("m2"), userMsg("compress-1")]
     syncCompressionBlocks(state, logger, messages)
     const block = state.prune.messages.blocksById.get(1)!
-    assert.equal(
-        block.active,
-        true,
-        "block should stay active — existence IS proof",
-    )
+    assert.equal(block.active, true, "block should stay active — existence IS proof")
     assert.ok(state.prune.messages.activeBlockIds.has(1))
 })
 
@@ -115,10 +111,16 @@ test("syncCompressionBlocks deactivates consumed blocks when parent is active", 
     )
     state.prune.messages.blocksById.set(
         2,
-        makeBlock({ blockId: 2, anchorMessageId: "m3", consumedBlockIds: [1], createdAt: 2 }),
+        makeBlock({
+            blockId: 2,
+            anchorMessageId: "m3",
+            compressMessageId: "compress-2",
+            consumedBlockIds: [1],
+            createdAt: 2,
+        }),
     )
     state.prune.messages.activeBlockIds.add(1)
-    const messages = [userMsg("m1"), userMsg("m3")]
+    const messages = [userMsg("m1"), userMsg("m3"), userMsg("compress-1"), userMsg("compress-2")]
     syncCompressionBlocks(state, logger, messages)
     const block1 = state.prune.messages.blocksById.get(1)!
     const block2 = state.prune.messages.blocksById.get(2)!
@@ -135,7 +137,7 @@ test("syncCompressionBlocks updates byMessageId activeBlockIds after sync", () =
         allBlockIds: [1],
         activeBlockIds: [1],
     })
-    const messages = [userMsg("m2")]
+    const messages = [userMsg("m2"), userMsg("compress-1")]
     syncCompressionBlocks(state, logger, messages)
     const entry2 = state.prune.messages.byMessageId.get("m2")!
     assert.equal(
@@ -149,19 +151,24 @@ test("syncCompressionBlocks processes blocks in creation order", () => {
     const state = createSessionState()
     state.prune.messages.blocksById.set(
         2,
-        makeBlock({ blockId: 2, anchorMessageId: "m3", createdAt: 200 }),
+        makeBlock({
+            blockId: 2,
+            anchorMessageId: "m3",
+            compressMessageId: "compress-2",
+            createdAt: 200,
+        }),
     )
     state.prune.messages.blocksById.set(
         1,
         makeBlock({ blockId: 1, anchorMessageId: "m1", createdAt: 100 }),
     )
-    const messages = [userMsg("m1"), userMsg("m3")]
+    const messages = [userMsg("m1"), userMsg("m3"), userMsg("compress-1"), userMsg("compress-2")]
     syncCompressionBlocks(state, logger, messages)
     assert.ok(state.prune.messages.activeBlockIds.has(1))
     assert.ok(state.prune.messages.activeBlockIds.has(2))
 })
 
-test("issue #125: external anchor deletion keeps block active (anchor-survival fix)", () => {
+test("missing checkpoint carrier deactivates the block and restores source visibility", () => {
     const state = createSessionState()
     state.prune.messages.blocksById.set(1, makeBlock({ blockId: 1, anchorMessageId: "anchor-1" }))
     state.prune.messages.activeBlockIds.add(1)
@@ -182,12 +189,12 @@ test("issue #125: external anchor deletion keeps block active (anchor-survival f
     syncCompressionBlocks(state, logger, messages)
 
     const block = state.prune.messages.blocksById.get(1)!
-    assert.equal(block.active, true, "block stays active — existence IS proof")
+    assert.equal(block.active, false, "a checkpoint without a visible carrier must deactivate")
 
     const survivingEntry = state.prune.messages.byMessageId.get("surviving-msg")!
     assert.equal(
         survivingEntry.activeBlockIds.length,
-        1,
-        "surviving message still has block 1 active",
+        0,
+        "source messages become visible when their checkpoint carrier disappears",
     )
 })

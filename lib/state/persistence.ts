@@ -8,7 +8,13 @@ import * as fs from "fs/promises"
 import { existsSync } from "fs"
 import { homedir } from "os"
 import { join } from "path"
-import type { CompressionBlock, PrunedMessageEntry, SessionState, SessionStats } from "./types"
+import type {
+    CompressionBlock,
+    PendingCompression,
+    PrunedMessageEntry,
+    SessionState,
+    SessionStats,
+} from "./types"
 import type { Logger } from "../logger"
 import { serializePruneMessagesState } from "./utils"
 
@@ -41,6 +47,7 @@ export interface PersistedNudges {
     /** @deprecated use lastTier2NudgeTokens — migrated on load */
     lastTierNudgeTokens?: number
     compressBaselineSet?: boolean
+    pendingCompression?: PendingCompression
 }
 
 export interface PersistedMessageIds {
@@ -50,6 +57,7 @@ export interface PersistedMessageIds {
 }
 
 export interface PersistedSessionState {
+    schemaVersion: 3
     sessionName?: string
     prune: PersistedPrune
     nudges: PersistedNudges
@@ -116,6 +124,7 @@ export async function saveSessionState(
     }
 
     const state: PersistedSessionState = {
+        schemaVersion: 3,
         sessionName: sessionName,
         prune: {
             messages: serializePruneMessagesState(sessionState.prune.messages),
@@ -131,6 +140,7 @@ export async function saveSessionState(
             lastTier2NudgeTokens: sessionState.nudges.lastTier2NudgeTokens,
             lastTier3NudgeTokens: sessionState.nudges.lastTier3NudgeTokens,
             compressBaselineSet: sessionState.nudges.compressBaselineSet,
+            pendingCompression: sessionState.nudges.pendingCompression,
         },
         stats: sessionState.stats,
         lastUpdated: new Date().toISOString(),
@@ -162,15 +172,16 @@ export async function loadSessionState(
         const content = await fs.readFile(filePath, "utf-8")
         const state = JSON.parse(content) as PersistedSessionState
 
+        if (state?.schemaVersion !== 3) {
+            logger.info("Ignoring state from an incompatible ACP session schema", {
+                sessionId,
+            })
+            return null
+        }
+
         const hasPruneMessages = state?.prune?.messages && typeof state.prune.messages === "object"
         const hasNudgeFormat = state?.nudges && typeof state.nudges === "object"
-        if (
-            !state ||
-            !state.prune ||
-            !hasPruneMessages ||
-            !state.stats ||
-            !hasNudgeFormat
-        ) {
+        if (!state || !state.prune || !hasPruneMessages || !state.stats || !hasNudgeFormat) {
             logger.warn("Invalid session state file, ignoring", {
                 sessionId: sessionId,
             })

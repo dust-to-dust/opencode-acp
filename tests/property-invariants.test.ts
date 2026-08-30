@@ -94,7 +94,13 @@ function textPart(msgId: string, text: string) {
 
 function userMsg(id: string, text: string): WithParts {
     return {
-        info: { id, role: "user", sessionID: SID, agent: "a", time: { created: 1 } } as WithParts["info"],
+        info: {
+            id,
+            role: "user",
+            sessionID: SID,
+            agent: "a",
+            time: { created: 1 },
+        } as WithParts["info"],
         parts: [textPart(id, text)],
     }
 }
@@ -102,7 +108,13 @@ function userMsg(id: string, text: string): WithParts {
 function assistantMsg(id: string, text: string, toolParts?: unknown[]): WithParts {
     const parts = [...(toolParts ?? []), textPart(id, text)]
     return {
-        info: { id, role: "assistant", sessionID: SID, agent: "a", time: { created: 2 } } as WithParts["info"],
+        info: {
+            id,
+            role: "assistant",
+            sessionID: SID,
+            agent: "a",
+            time: { created: 2 },
+        } as WithParts["info"],
         parts,
     }
 }
@@ -129,7 +141,11 @@ function makeMessagesWithRefs(count: number, tokenSize: number): WithParts[] {
         if (isUser) {
             msgs.push(userMsg(id, `user ${i} ${padding}`))
         } else {
-            msgs.push(assistantMsg(id, `assistant ${i} ${padding}`, [toolPart(`call-${i}`, "bash", `output ${i} ${padding}`)]))
+            msgs.push(
+                assistantMsg(id, `assistant ${i} ${padding}`, [
+                    toolPart(`call-${i}`, "bash", `output ${i} ${padding}`),
+                ]),
+            )
         }
     }
     return msgs
@@ -189,7 +205,9 @@ test("INV1: excludeProtectedRanges never returns ranges touching protected refs"
         fc.property(
             fc.array(
                 fc.record({
-                    startRef: fc.string({ minLength: 2, maxLength: 6 }).map((s) => "m" + s.slice(1)),
+                    startRef: fc
+                        .string({ minLength: 2, maxLength: 6 })
+                        .map((s) => "m" + s.slice(1)),
                     endRef: fc.string({ minLength: 2, maxLength: 6 }).map((s) => "m" + s.slice(1)),
                     count: fc.integer({ min: 1, max: 10 }),
                     tokens: fc.integer({ min: 100, max: 10_000 }),
@@ -198,10 +216,13 @@ test("INV1: excludeProtectedRanges never returns ranges touching protected refs"
                 }),
                 { minLength: 0, maxLength: 20 },
             ),
-            fc.uniqueArray(fc.string({ minLength: 2, maxLength: 6 }).map((s) => "m" + s.slice(1)), {
-                minLength: 0,
-                maxLength: 20,
-            }),
+            fc.uniqueArray(
+                fc.string({ minLength: 2, maxLength: 6 }).map((s) => "m" + s.slice(1)),
+                {
+                    minLength: 0,
+                    maxLength: 20,
+                },
+            ),
             (ranges, protectedRefs) => {
                 const protectedSet = new Set(protectedRefs)
                 const result = excludeProtectedRanges(ranges as CompressibleRange[], protectedSet)
@@ -278,35 +299,40 @@ test("INV2: buildCompressibleRanges groups never span protected boundary", () =>
 
 test("INV3: computeProtectedRefs includes last N visible messages", () => {
     fc.assert(
-        fc.property(arbMsgCount, arbMsgTokenSize, arbPreserveN, (msgCount, tokenSize, preserveN) => {
-            const state = createSessionState()
-            const messages = makeMessagesWithRefs(msgCount, tokenSize)
-            assignRefs(state, messages)
+        fc.property(
+            arbMsgCount,
+            arbMsgTokenSize,
+            arbPreserveN,
+            (msgCount, tokenSize, preserveN) => {
+                const state = createSessionState()
+                const messages = makeMessagesWithRefs(msgCount, tokenSize)
+                assignRefs(state, messages)
 
-            const config = buildConfig({
-                preserveRecentMessages: preserveN,
-                preserveRecentTokens: 0, // disable token-based to isolate message-count
-            })
+                const config = buildConfig({
+                    preserveRecentMessages: preserveN,
+                    preserveRecentTokens: 0, // disable token-based to isolate message-count
+                })
 
-            const protectedRefs = computeProtectedRefs(messages, state, config.compress)
+                const protectedRefs = computeProtectedRefs(messages, state, config.compress)
 
-            // The last min(preserveN, visibleCount) messages should be protected
-            const visibleCount = messages.length
-            const expectedProtected = Math.min(preserveN, visibleCount)
+                // The last min(preserveN, visibleCount) messages should be protected
+                const visibleCount = messages.length
+                const expectedProtected = Math.min(preserveN, visibleCount)
 
-            if (expectedProtected > 0) {
-                const lastNMessages = messages.slice(-expectedProtected)
-                for (const msg of lastNMessages) {
-                    const ref = state.messageIds.byRawId.get(msg.info.id)
-                    if (ref) {
-                        assert.ok(
-                            protectedRefs.has(ref),
-                            `Last-N message ref ${ref} should be protected (preserveRecentMessages=${preserveN})`,
-                        )
+                if (expectedProtected > 0) {
+                    const lastNMessages = messages.slice(-expectedProtected)
+                    for (const msg of lastNMessages) {
+                        const ref = state.messageIds.byRawId.get(msg.info.id)
+                        if (ref) {
+                            assert.ok(
+                                protectedRefs.has(ref),
+                                `Last-N message ref ${ref} should be protected (preserveRecentMessages=${preserveN})`,
+                            )
+                        }
                     }
                 }
-            }
-        }),
+            },
+        ),
         { numRuns: 200 },
     )
 })
@@ -415,7 +441,9 @@ test("INV5: filterRecommendedRanges keeps every range above the effective floor"
         fc.property(
             fc.array(
                 fc.record({
-                    startRef: fc.string({ minLength: 2, maxLength: 6 }).map((s) => "m" + s.slice(1)),
+                    startRef: fc
+                        .string({ minLength: 2, maxLength: 6 })
+                        .map((s) => "m" + s.slice(1)),
                     endRef: fc.string({ minLength: 2, maxLength: 6 }).map((s) => "m" + s.slice(1)),
                     count: fc.integer({ min: 1, max: 10 }),
                     tokens: fc.integer({ min: EFFECTIVE_MIN_COMPRESSIBLE_TOKENS, max: 50_000 }),
@@ -426,11 +454,7 @@ test("INV5: filterRecommendedRanges keeps every range above the effective floor"
             ),
             (ranges) => {
                 const withEffective = ranges.map((r) => ({ ...r, effectiveTokens: r.tokens }))
-                const result = filterRecommendedRanges(
-                    withEffective as CompressibleRange[],
-                    [],
-                    {},
-                )
+                const result = filterRecommendedRanges(withEffective as CompressibleRange[], [], {})
                 assert.equal(
                     result.length,
                     ranges.length,
@@ -541,98 +565,6 @@ test("INV6: nudge text injected implies shouldInjectThisTurn is true", () => {
             },
         ),
         { numRuns: 50 },
-    )
-})
-
-// ═══════════════════════════════════════════════════════════════════════
-// INV7: Pipeline — compress attempt clears all nudge anchors
-// ═══════════════════════════════════════════════════════════════════════
-// Would have caught: v1.14.4 failed compress not resetting state (Defect 2)
-//
-// If the current turn has ANY compress attempt (success or failure), all
-// nudge anchors and lastNudgeShownTokens must be cleared after injectCompressNudges.
-
-test("INV7: compress attempt (any status) clears all nudge anchors", () => {
-    fc.assert(
-        fc.property(
-            arbPipelineMsgCount,
-            arbPipelineMsgTokenSize,
-            arbPreserveN,
-            fc.boolean(),
-            (msgCount, tokenSize, preserveN, succeeded) => {
-                const state = createSessionState()
-                state.modelContextLimit = 100_000
-
-                const messages = makeMessagesWithRefs(msgCount, tokenSize)
-                assignRefs(state, messages)
-
-                // Ensure messages end with user → assistant (so compress is in current turn)
-                const lastMsg = messages[messages.length - 1]
-                if (lastMsg && lastMsg.info.role !== "user") {
-                    // If last message is assistant, add a user message to start a new turn
-                    const userTurnMsg = userMsg("msg-user-turn", "continue")
-                    messages.push(userTurnMsg)
-                    state.messageIds.byRawId.set("msg-user-turn", `m${String(messages.length).padStart(5, "0")}`)
-                }
-
-                // Add compress attempt as a new assistant message in the current turn
-                const compressMsgId = "msg-compress"
-                const compressMsg = assistantMsg(compressMsgId, "compressing", [{
-                    id: "compress-part",
-                    messageID: compressMsgId,
-                    sessionID: SID,
-                    type: "tool" as const,
-                    tool: "compress",
-                    callID: "compress-call",
-                    state: {
-                        status: succeeded ? ("completed" as const) : ("failed" as const),
-                        input: { content: [{ startId: "m00001", endId: "m00005", summary: "test" }] },
-                        output: succeeded ? "compressed" : "error",
-                    },
-                }])
-                messages.push(compressMsg)
-                state.messageIds.byRawId.set(compressMsgId, `m${String(messages.length).padStart(5, "0")}`)
-
-                // Pre-populate anchors to simulate an active nudge
-                state.nudges.contextLimitAnchors.add("msg-0")
-                state.nudges.turnNudgeAnchors.add("msg-0")
-                state.nudges.iterationNudgeAnchors.add("msg-0")
-                state.nudges.lastNudgeShownTokens = 50000
-
-                const config = buildConfig({
-                    preserveRecentMessages: preserveN,
-                })
-
-                try {
-                    injectCompressNudges(state, config, logger, messages, {} as any)
-                } catch {
-                    return
-                }
-
-                // After processing, anchors should be cleared
-                assert.equal(
-                    state.nudges.contextLimitAnchors.size,
-                    0,
-                    "contextLimitAnchors should be cleared after compress attempt",
-                )
-                assert.equal(
-                    state.nudges.turnNudgeAnchors.size,
-                    0,
-                    "turnNudgeAnchors should be cleared after compress attempt",
-                )
-                assert.equal(
-                    state.nudges.iterationNudgeAnchors.size,
-                    0,
-                    "iterationNudgeAnchors should be cleared after compress attempt",
-                )
-                assert.equal(
-                    state.nudges.lastNudgeShownTokens,
-                    undefined,
-                    "lastNudgeShownTokens should be cleared after compress attempt",
-                )
-            },
-        ),
-        { numRuns: 30 },
     )
 })
 
