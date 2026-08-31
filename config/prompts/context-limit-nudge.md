@@ -1,4 +1,3 @@
-export const CONTEXT_LIMIT_NUDGE = `
 <system-reminder>
 ⚠️ Context limit reached — time to compress the largest ranges you no longer need. Prioritize completed tool outputs and resolved work. You can decompress specific blocks later if you need details. Keeping context lean helps you stay accurate.
 
@@ -26,4 +25,3 @@ RANGE STRATEGY:
 - Prefer one large range over multiple small ones.
 - Compress OLDER resolved history first. Keep recent active work.
 </system-reminder>
-`

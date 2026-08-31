@@ -1,6 +1,5 @@
-export const ITERATION_NUDGE = `
 <system-reminder>
-You've been iterating for a while. If any earlier work is closed and unlikely to be referenced, compress it now.
+Context is getting full. If you've finished reading tool outputs or exploration results, compress them — you can decompress later if needed. This keeps your focus on the current task and improves accuracy.
 
 {
   "topic": "Short Label",
@@ -9,4 +8,3 @@ You've been iterating for a while. If any earlier work is closed and unlikely to
 
 ⚠️ ONLY use IDs from  tags visible above. Do NOT invent or copy example IDs.
 </system-reminder>
-`

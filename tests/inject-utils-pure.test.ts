@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { computeShouldNudge, DEFAULT_NUDGE_GROWTH_TOKENS, estimateContextComposition } from "../lib/messages/inject/utils"
+import { getBundledConfig } from "../lib/config"
+import { computeShouldNudge, estimateContextComposition } from "../lib/messages/inject/utils"
 import { cacheSystemPromptTokens } from "../lib/ui/utils"
 import { estimateSystemPromptTokens } from "../lib/token-utils"
 import { countTokens } from "../lib/token-utils"
@@ -183,12 +184,15 @@ test("regression: post-compress lastNudgeTokens=currentTokens prevents immediate
     assert.equal(afterGrowth.shouldNudge, true)
 })
 
-test("DEFAULT_NUDGE_GROWTH_TOKENS: fixed default, independent of window size", () => {
-    assert.equal(DEFAULT_NUDGE_GROWTH_TOKENS, 50_000)
+test("bundled config stores the nudge growth setting", () => {
+    assert.equal(getBundledConfig().compress.nudgeGrowthTokens, 50_000)
 })
 
 function mkText(id: string, text: string): WithParts {
-    return { info: { id } as any, parts: [{ type: "text", text, id: `${id}-p`, sessionID: "s", messageID: id }] as any }
+    return {
+        info: { id } as any,
+        parts: [{ type: "text", text, id: `${id}-p`, sessionID: "s", messageID: id }] as any,
+    }
 }
 
 function mkTool(id: string, raw: string): WithParts {
@@ -196,12 +200,19 @@ function mkTool(id: string, raw: string): WithParts {
 }
 
 function mkSummary(id: string, text: string): WithParts {
-    return { info: { id: `msg_dcp_summary_${id}` } as any, parts: [{ type: "text", text: `[Compressed conversation section]\n${text}` }] as any }
+    return {
+        info: { id: `msg_dcp_summary_${id}` } as any,
+        parts: [{ type: "text", text: `[Compressed conversation section]\n${text}` }] as any,
+    }
 }
 
 function mkAssistantWithTokens(input: number, cacheRead = 0, cacheWrite = 0): WithParts {
     return {
-        info: { id: "a1", role: "assistant", tokens: { input, output: 100, cache: { read: cacheRead, write: cacheWrite } } } as any,
+        info: {
+            id: "a1",
+            role: "assistant",
+            tokens: { input, output: 100, cache: { read: cacheRead, write: cacheWrite } },
+        } as any,
         parts: [{ type: "text", text: "ok", id: "a1-p", sessionID: "s", messageID: "a1" }] as any,
     }
 }
@@ -210,7 +221,10 @@ test("estimateSystemPromptTokens: assistant input minus first user text", () => 
     const userText = "Hello, please help me with a task."
     const input = 10_000
     const messages = [
-        { info: { id: "u1", role: "user" } as any, parts: [{ type: "text", text: userText }] as any },
+        {
+            info: { id: "u1", role: "user" } as any,
+            parts: [{ type: "text", text: userText }] as any,
+        },
         mkAssistantWithTokens(input),
     ]
     const sys = estimateSystemPromptTokens(messages)
@@ -235,7 +249,10 @@ test("estimateSystemPromptTokens: handles cache.read and cache.write", () => {
 
 test("estimateContextComposition: systemTokens from assistant data included in total", () => {
     const msgs = [
-        { info: { id: "u1", role: "user" } as any, parts: [{ type: "text", text: "hello" }] as any },
+        {
+            info: { id: "u1", role: "user" } as any,
+            parts: [{ type: "text", text: "hello" }] as any,
+        },
         mkAssistantWithTokens(8000),
         mkText("m1", "x".repeat(400)),
     ]
@@ -277,7 +294,9 @@ test("estimateContextComposition: summary message counted in summaryTokens not m
     const summaryText = "x".repeat(400)
     const msg = mkSummary("b0", summaryText)
     const c = estimateContextComposition([msg])
-    const expectedSummary = Math.round(("[Compressed conversation section]\n" + summaryText).length / 4)
+    const expectedSummary = Math.round(
+        ("[Compressed conversation section]\n" + summaryText).length / 4,
+    )
     assert.equal(c.summaryTokens, expectedSummary)
     assert.equal(c.messageTokens, 0)
     assert.equal(c.total, c.summaryTokens)
@@ -304,10 +323,7 @@ test("estimateContextComposition: total = system + tool + summary + message (no 
 })
 
 test("estimateContextComposition: largestRanges excludes summaries", () => {
-    const msgs = [
-        mkText("m1", "x".repeat(2400)),
-        mkSummary("b0", "y".repeat(4000)),
-    ]
+    const msgs = [mkText("m1", "x".repeat(2400)), mkSummary("b0", "y".repeat(4000))]
     const c = estimateContextComposition(msgs)
     assert.equal(c.largestRanges.length, 1)
     assert.equal(c.largestRanges[0].ref, "?")
@@ -331,7 +347,9 @@ test("estimateContextComposition: largestMessageRanges excludes messages with co
 
 test("estimateContextComposition: resolves ref from state.messageIds.byRawId", () => {
     const msg = mkText("raw-id-1", "x".repeat(2400))
-    const state = { messageIds: { byRawId: new Map([["raw-id-1", "m00001"]]), byRef: new Map(), nextRef: 2 } } as any
+    const state = {
+        messageIds: { byRawId: new Map([["raw-id-1", "m00001"]]), byRef: new Map(), nextRef: 2 },
+    } as any
     const c = estimateContextComposition([msg], state)
     assert.equal(c.largestRanges[0].ref, "m00001")
 })
@@ -346,7 +364,10 @@ function mkCompress(id: string, summary: string): WithParts {
                 callID: "call-1",
                 state: {
                     status: "completed",
-                    input: { topic: "test topic", content: [{ startId: "m001", endId: "m002", summary }] },
+                    input: {
+                        topic: "test topic",
+                        content: [{ startId: "m001", endId: "m002", summary }],
+                    },
                 },
             } as any,
         ] as any,
@@ -358,8 +379,14 @@ test("estimateContextComposition: compress tool summary counted in summaryTokens
     const msg = mkCompress("m1", summaryText)
     const c = estimateContextComposition([msg])
     const expectedSummary = Math.round(summaryText.length / 4)
-    assert.ok(c.summaryTokens >= expectedSummary, `summaryTokens ${c.summaryTokens} should include summary text (${expectedSummary})`)
-    assert.ok(c.toolTokens < expectedSummary, `toolTokens ${c.toolTokens} should be less than summary text`)
+    assert.ok(
+        c.summaryTokens >= expectedSummary,
+        `summaryTokens ${c.summaryTokens} should include summary text (${expectedSummary})`,
+    )
+    assert.ok(
+        c.toolTokens < expectedSummary,
+        `toolTokens ${c.toolTokens} should be less than summary text`,
+    )
     assert.equal(c.total, c.toolTokens + c.summaryTokens + c.messageTokens)
 })
 
@@ -398,7 +425,10 @@ test("estimateContextComposition: compress with multiple content entries sums al
     } as WithParts
     const c = estimateContextComposition([msg])
     const expectedSummary = Math.round((summary1.length + summary2.length) / 4)
-    assert.ok(c.summaryTokens >= expectedSummary, `summaryTokens ${c.summaryTokens} should include both summaries (${expectedSummary})`)
+    assert.ok(
+        c.summaryTokens >= expectedSummary,
+        `summaryTokens ${c.summaryTokens} should include both summaries (${expectedSummary})`,
+    )
 })
 
 test("estimateContextComposition: compress tool without state.input falls back to toolTokens", () => {
@@ -416,7 +446,9 @@ test("estimateContextComposition: non-compress tools unaffected by summary class
     const msg = mkTool("m1", '{"data":"' + "x".repeat(4000) + '"}')
     const c = estimateContextComposition([msg])
     assert.equal(c.summaryTokens, 0, "non-compress tools should not produce summaryTokens")
-    const expectedTool = Math.round(JSON.stringify({ type: "tool", tool: { data: "x".repeat(4000) } }).length / 4)
+    const expectedTool = Math.round(
+        JSON.stringify({ type: "tool", tool: { data: "x".repeat(4000) } }).length / 4,
+    )
     assert.ok(c.toolTokens > 0)
     assert.equal(c.total, c.toolTokens)
 })
@@ -435,7 +467,11 @@ test("estimateContextComposition: prefers cached state.systemPromptTokens over d
         messageIds: { byRawId: new Map(), byRef: new Map(), nextRef: 2 },
     } as any
     const c = estimateContextComposition(messages, state)
-    assert.equal(c.systemTokens, 10_000, "systemTokens must come from cached state, not the degraded estimate")
+    assert.equal(
+        c.systemTokens,
+        10_000,
+        "systemTokens must come from cached state, not the degraded estimate",
+    )
     assert.equal(c.total, 10_000 + c.toolTokens + c.summaryTokens + c.messageTokens)
 })
 
@@ -466,7 +502,11 @@ test("cacheSystemPromptTokens: does not overwrite stable positive cache with deg
         mkAssistantWithTokens(200_000),
     ]
     cacheSystemPromptTokens(state, degraded)
-    assert.equal(state.systemPromptTokens, 10_000, "stable cache must survive degraded message arrays")
+    assert.equal(
+        state.systemPromptTokens,
+        10_000,
+        "stable cache must survive degraded message arrays",
+    )
 })
 
 test("cacheSystemPromptTokens: writes initial estimate when cache is undefined (#255)", () => {

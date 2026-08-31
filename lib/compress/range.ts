@@ -1,7 +1,6 @@
 import { tool } from "@opencode-ai/plugin"
 import { type ToolFactoryContext, resolveToolContext } from "./types"
 import { countMessageCharacters, countTokens } from "../token-utils"
-import { RANGE_FORMAT_EXTENSION } from "../prompts/extensions/tool"
 import {
     finalizeSession,
     prepareSession,
@@ -38,10 +37,7 @@ import {
 } from "./state"
 import type { CompressRangeToolArgs } from "./types"
 import { resolveKeepMarkers } from "./keep-markers"
-import {
-    buildQualityRejectionError,
-    evaluatePreCommitQuality,
-} from "./quality-gate"
+import { buildQualityRejectionError, evaluatePreCommitQuality } from "./quality-gate"
 
 function buildSchema(maxSummaryLengthHard: number) {
     return {
@@ -99,7 +95,7 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
     const runtimePrompts = factoryCtx.prompts.getRuntimePrompts()
 
     return tool({
-        description: runtimePrompts.compressRange + RANGE_FORMAT_EXTENSION,
+        description: runtimePrompts.compressRange + runtimePrompts.rangeFormatExtension,
         args: buildSchema(factoryCtx.config.compress.maxSummaryLengthHard),
         async execute(args, toolCtx) {
             const ctx = resolveToolContext(factoryCtx, toolCtx.sessionID)
@@ -322,7 +318,9 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
             const bypassQuality = acknowledgeRisk && ctx.state.qualityGateRetryPending
             const ignoredAcknowledgeRisk = acknowledgeRisk && !ctx.state.qualityGateRetryPending
             if (ignoredAcknowledgeRisk) {
-                ctx.logger.warn("compress: acknowledgeRisk ignored — no quality gate rejection pending")
+                ctx.logger.warn(
+                    "compress: acknowledgeRisk ignored — no quality gate rejection pending",
+                )
             }
             ctx.state.qualityGateRetryPending = false
             if (!bypassQuality) {
@@ -346,6 +344,7 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
                                 messageTokenById: plan.selection.messageTokenById,
                             },
                             result,
+                            runtimePrompts,
                         )
                     }
                 }

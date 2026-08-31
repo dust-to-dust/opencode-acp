@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ranxianglei/opencode-acp/master/dcp.schema.json",
+  "enabled": true,
+  "autoUpdate": true,
+  "debug": false,
+  "logLevel": "info",
+  "allowSubAgents": true,
+  "pruneNotification": "off",
+  "pruneNotificationType": "toast",
+  "commands": {
+    "enabled": true,
+    "protectedTools": [
+      "task",
+      "skill",
+      "todowrite",
+      "todoread",
+      "compress",
+      "decompress",
+      "batch",
+      "plan_enter",
+      "plan_exit",
+      "write",
+      "edit"
+    ]
+  },
+  "experimental": {
+    "customPrompts": false
+  },
+  "protectedFilePatterns": [],
+  "compress": {
+    "permission": "allow",
+    "showCompression": true,
+    "summaryBuffer": true,
+    "maxContextLimit": "80%",
+    "minContextLimit": "80%",
+    "nudgeFrequency": 5,
+    "minNudgeContextPercent": 15,
+    "iterationNudgeThreshold": 15,
+    "nudgeForce": "soft",
+    "protectedTools": [
+      "skill",
+      "compress"
+    ],
+    "protectTags": false,
+    "protectUserMessages": false,
+    "maxSummaryLengthHard": 20000,
+    "minCompressRange": 5000,
+    "minNudgeGrowthRatio": 0.45,
+    "minNudgeGrowthFloor": 5000,
+    "nudgeGrowthTokens": 50000,
+    "emergencyThresholdPercent": "98%",
+    "maxVisibleSegments": 50,
+    "keepEmbedMaxChars": 2000,
+    "lastSegmentSoftBlock": true,
+    "preserveRecentMessages": 5,
+    "preserveRecentTokens": 5000,
+    "preserveLastUserMessage": true
+  },
+  "gc": {
+    "algorithm": "truncate",
+    "promotionThreshold": 5,
+    "maxBlockAge": 9007199254740991,
+    "maxOldGenSummaryLength": 3000,
+    "majorGcThresholdPercent": "100%",
+    "batchCleanup": {
+      "lowThreshold": "55%",
+      "highThreshold": "75%",
+      "forceThreshold": "90%"
+    }
+  },
+  "qualityGate": {
+    "enabled": false,
+    "algorithm": "rouge-recall-v1",
+    "algorithms": {
+      "rouge-recall-v1": {
+        "layer1MinChars": 200,
+        "layer1MinRetentionPct": 5,
+        "layer2MaxRougeF1": 0.05,
+        "layer2MaxTop20Recall": 0.2
+      }
+    }
+  },
+  "messageFilters": {
+    "enabled": true,
+    "filters": {
+      "omo-system-reminder": { "enabled": true },
+      "omo-todo-continuation": { "enabled": true },
+      "omo-context": { "enabled": true },
+      "omo-task-directive": { "enabled": true },
+      "omo-mode-injection": { "enabled": true }
+    }
+  }
+}

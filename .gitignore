@@ -27,6 +27,7 @@ Thumbs.db
 
 # OpenCode
 .opencode/
+.codebase-memory/
 
 # Python cache
 __pycache__/
@@ -41,9 +42,9 @@ tests/results/
 notes/
 test-update.ts
 
-# Documentation (local development only)
-docs/
+# Local investigation artifacts
 SCHEMA_NOTES.md
+架构.md
 
 repomix-output.xml
 results.txt

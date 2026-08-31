@@ -35,7 +35,9 @@ const server: Plugin = (async (ctx) => {
     }
 
     if (process.env.BILLION_CONTEXT_PROXY) {
-        console.log("[opencode-acp] disabled: BILLION_CONTEXT_PROXY detected — proxy handles compression")
+        console.log(
+            "[opencode-acp] disabled: BILLION_CONTEXT_PROXY detected — proxy handles compression",
+        )
         return {}
     }
 
@@ -49,7 +51,7 @@ const server: Plugin = (async (ctx) => {
         secureMode: isSecureMode(),
     })
     const registry = new SessionStateRegistry(logger)
-    const prompts = new PromptStore(logger, ctx.directory, config.experimental.customPrompts)
+    const prompts = new PromptStore(logger)
     const hostPermissions: HostPermissionSnapshot = {
         global: undefined,
         agents: {},

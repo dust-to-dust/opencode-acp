@@ -72,6 +72,7 @@
     },
     "files": [
         "dist/",
+        "config/",
         "README.md",
         "README.zh-CN.md",
         "LICENSE",

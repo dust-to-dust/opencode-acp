@@ -1,5 +1,5 @@
-import { HOW_TO_COMPRESS_RULES } from "context-compress-algorithms/prompts"
 import type { QualityGateResult } from "./types"
+import { readBundledPrompt, type RuntimePrompts } from "../../prompts/store"
 
 export interface RejectionPlanInfo {
     startId: string
@@ -33,7 +33,8 @@ function computeStats(plan: RejectionPlanInfo): {
         originalTokens += plan.messageTokenById.get(id) || 0
     }
     const summaryChars = plan.summary.length
-    const ratio = originalTokens > 0 ? (originalTokens / Math.max(summaryChars / 4, 1)).toFixed(1) : "?"
+    const ratio =
+        originalTokens > 0 ? (originalTokens / Math.max(summaryChars / 4, 1)).toFixed(1) : "?"
     const retentionPct =
         originalTokens > 0 ? ((summaryChars / (originalTokens * 4)) * 100).toFixed(2) : "?"
     return { originalTokens, summaryChars, ratio, retentionPct }
@@ -42,6 +43,9 @@ function computeStats(plan: RejectionPlanInfo): {
 export function buildQualityRejectionError(
     plan: RejectionPlanInfo,
     result: QualityGateResult,
+    prompts: Pick<RuntimePrompts, "howToCompressRules"> = {
+        howToCompressRules: readBundledPrompt("how-to-compress.md"),
+    },
 ): Error {
     const stats = computeStats(plan)
     const metrics = [
@@ -65,7 +69,7 @@ Your summary becomes the SOLE record. If it fails, subsequent work is built on a
 memory loss → wrong assumptions → entire reasoning chain collapse.
 Treat every compression with maximum care.
 
-${HOW_TO_COMPRESS_RULES}
+${prompts.howToCompressRules}
 
 To retry: rewrite a more complete summary that preserves critical details (file paths, decisions,
 exact values, errors). Then add "acknowledgeRisk": true to the compress tool call parameters.

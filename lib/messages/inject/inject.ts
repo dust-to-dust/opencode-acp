@@ -39,10 +39,8 @@ import {
     getNudgeFrequency,
     getModelInfo,
     isContextOverLimits,
-    DEFAULT_NUDGE_GROWTH_TOKENS,
 } from "./utils"
 import { buildCompressedBlockGuidance } from "../../prompts/extensions/nudge"
-import { COMPRESS_PHILOSOPHY, HOW_TO_COMPRESS_RULES, TIER2_DISTILL_RULES, TIER3_CONDENSE_RULES } from "context-compress-algorithms/prompts"
 import { getTierTokenUsage } from "../../state/utils"
 
 /**
@@ -131,7 +129,11 @@ export const injectCompressNudges = (
                 .slice(currentTurnStart)
                 .some((m) => m.info.role === "assistant" && messageHasCompress(m))
 
-            if (currentTurnHasSuccessfulCompress && wasNudgeTriggered && !state.nudges.compressBaselineSet) {
+            if (
+                currentTurnHasSuccessfulCompress &&
+                wasNudgeTriggered &&
+                !state.nudges.compressBaselineSet
+            ) {
                 const baseline = state.nudges.lastPerMessageNudgeTokens
                 const postCompress = currentTokens
                 const preCompress = preCompressTokens
@@ -220,7 +222,10 @@ export const injectCompressNudges = (
                     (message) => message.info.id === lastUserMessage.info.id,
                 )
                 if (lastUserMessageIndex >= 0) {
-                    const messagesSinceUser = countMessagesAfterIndex(messages, lastUserMessageIndex)
+                    const messagesSinceUser = countMessagesAfterIndex(
+                        messages,
+                        lastUserMessageIndex,
+                    )
                     const iterationThreshold = getIterationNudgeThreshold(config)
 
                     if (
@@ -247,8 +252,7 @@ export const injectCompressNudges = (
 
     const suffixMessage = createSuffixMessage(messages)
 
-
-    const nudgeGrowthTokens = config.compress?.nudgeGrowthTokens ?? DEFAULT_NUDGE_GROWTH_TOKENS
+    const nudgeGrowthTokens = config.compress.nudgeGrowthTokens
 
     // ── Growth floor gate (anti-thrashing) ──────────────────────────────
     // Nudge output is suppressed unless context grew by at least growthFloor
@@ -262,8 +266,8 @@ export const injectCompressNudges = (
     // Only bypassed at emergencyThresholdPercent (default 98%) — near-overflow
     // always fires regardless of growth.
     const growthFloor = Math.max(
-        config.compress?.minNudgeGrowthFloor ?? 5000,
-        (config.compress?.minNudgeGrowthRatio ?? 0.45) * nudgeGrowthTokens,
+        config.compress.minNudgeGrowthFloor,
+        config.compress.minNudgeGrowthRatio * nudgeGrowthTokens,
     )
     const emergencyThreshold = resolveEmergencyThreshold(config, modelContextLimit)
     const emergencyOverride =
@@ -294,7 +298,7 @@ export const injectCompressNudges = (
         overMinLimit,
         overMaxLimit,
         lastNudgeTokens: growthReference,
-        minNudgeContextPercent: config.compress?.minNudgeContextPercent ?? 15,
+        minNudgeContextPercent: config.compress.minNudgeContextPercent,
         nudgeGrowthTokens: effectiveThreshold,
     })
 
@@ -338,7 +342,10 @@ export const injectCompressNudges = (
         protectedRefs,
     )
 
-    const unprotectedCompressible = excludeProtectedRanges(contextRanges.compressible, protectedRefs)
+    const unprotectedCompressible = excludeProtectedRanges(
+        contextRanges.compressible,
+        protectedRefs,
+    )
 
     const recommendedRanges = filterRecommendedRanges(
         unprotectedCompressible,
@@ -347,7 +354,8 @@ export const injectCompressNudges = (
     )
     const hasRecommendations = recommendedRanges.length > 0
 
-    const allProtected = contextRanges.compressible.length === 0 && contextRanges.protected.length > 0
+    const allProtected =
+        contextRanges.compressible.length === 0 && contextRanges.protected.length > 0
     const allInProtectedZone = protectedRefs.size > 0 && unprotectedCompressible.length === 0
     const allBelowMin = contextRanges.compressible.length > 0 && recommendedRanges.length === 0
     const nothingToCompress = allProtected || allInProtectedZone || allBelowMin
@@ -371,7 +379,16 @@ export const injectCompressNudges = (
     // computed, injecting the full nudge text (with HOW_TO_COMPRESS rules) even
     // when the filter said "nothing to compress".
     if (shouldInjectNudge) {
-        applyAnchoredNudges(state, config, messages, prompts, compressionPriorities, currentTokens, modelContextLimit, suffixMessage)
+        applyAnchoredNudges(
+            state,
+            config,
+            messages,
+            prompts,
+            compressionPriorities,
+            currentTokens,
+            modelContextLimit,
+            suffixMessage,
+        )
     }
 
     if (state.nudges.lastPerMessageNudgeTokens === undefined && currentTokens !== undefined) {
@@ -388,19 +405,33 @@ export const injectCompressNudges = (
         const tierUsage = getTierTokenUsage(state)
 
         const tierChecks = [
-            { triggerTier: 2 as const, targetTier: 1 as const, tokens: tierUsage.tier1Tokens, lastNudge: state.nudges.lastTier2NudgeTokens },
-            { triggerTier: 3 as const, targetTier: 2 as const, tokens: tierUsage.tier2Tokens, lastNudge: state.nudges.lastTier3NudgeTokens },
+            {
+                triggerTier: 2 as const,
+                targetTier: 1 as const,
+                tokens: tierUsage.tier1Tokens,
+                lastNudge: state.nudges.lastTier2NudgeTokens,
+            },
+            {
+                triggerTier: 3 as const,
+                targetTier: 2 as const,
+                tokens: tierUsage.tier2Tokens,
+                lastNudge: state.nudges.lastTier3NudgeTokens,
+            },
         ]
 
         for (const tc of tierChecks) {
             if (tc.tokens < nudgeGrowthTokens) continue
-            const cadenceMet = tc.lastNudge === undefined ||
+            const cadenceMet =
+                tc.lastNudge === undefined ||
                 (currentTokens !== undefined && currentTokens - tc.lastNudge >= growthFloor)
             if (!cadenceMet) continue
 
             let candidates = [...state.prune.messages.activeBlockIds]
                 .map((id) => state.prune.messages.blocksById.get(id))
-                .filter((b): b is NonNullable<typeof b> => b !== undefined && b.active && (b.tier ?? 1) === tc.targetTier)
+                .filter(
+                    (b): b is NonNullable<typeof b> =>
+                        b !== undefined && b.active && (b.tier ?? 1) === tc.targetTier,
+                )
                 .sort((a, b) => a.blockId - b.blockId)
 
             // Cross-tier safety: narrow to exclude non-target active blocks by blockId.
@@ -455,7 +486,8 @@ export const injectCompressNudges = (
 
             if (candidates.length < 2) continue
 
-            const rules = tc.triggerTier === 2 ? TIER2_DISTILL_RULES : TIER3_CONDENSE_RULES
+            const rules =
+                tc.triggerTier === 2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules
             const candidateTokens = candidates.reduce((s, b) => s + b.summaryTokens, 0)
             const firstBlock = candidates[0]
             const lastBlock = candidates[candidates.length - 1]
@@ -465,9 +497,13 @@ export const injectCompressNudges = (
 
             const blockList = candidates
                 .slice(0, 10)
-                .map((b) => `b${b.blockId} (age=${b.survivedCount}, ${fmt(b.summaryTokens)}tok): "${b.topic}"`)
+                .map(
+                    (b) =>
+                        `b${b.blockId} (age=${b.survivedCount}, ${fmt(b.summaryTokens)}tok): "${b.topic}"`,
+                )
                 .join("\n")
-            const extraCount = candidates.length > 10 ? `\n...and ${candidates.length - 10} more` : ""
+            const extraCount =
+                candidates.length > 10 ? `\n...and ${candidates.length - 10} more` : ""
 
             const tierText = `\n\n[Tier ${tc.triggerTier} Trigger] ${sourceTier} summaries accumulated (${fmt(candidateTokens)} tokens across ${candidates.length} blocks). ${action} them to free context.\n\nTarget blocks (oldest first):\n${blockList}${extraCount}\n\nCompress range: \`content: [{ startId: "b${firstBlock.blockId}", endId: "b${lastBlock.blockId}", summary: "..." }]\`\nMultiple entries create separate blocks: \`content: [{ startId: "b${firstBlock.blockId}", endId: "b...", summary: "..." }, { startId: "b...", endId: "b${lastBlock.blockId}", summary: "..." }]\`\n\n${rules}`
 
@@ -516,7 +552,11 @@ export const injectCompressNudges = (
     } else if (nudgeAllowed && nothingToCompress) {
         logger.info("Nudge suppressed: nothing to compress", {
             session: state.sessionId,
-            reason: allProtected ? "all_protected" : allInProtectedZone ? "in_protected_zone" : "below_effective_floor",
+            reason: allProtected
+                ? "all_protected"
+                : allInProtectedZone
+                  ? "in_protected_zone"
+                  : "below_effective_floor",
             currentTokens,
             usagePct,
             compressibleRanges: contextRanges.compressible.length,
@@ -544,20 +584,24 @@ export const injectCompressNudges = (
                 n > 0 ? Math.max(1, Math.round((n / composition.total) * 100)) : 0
             const growth =
                 currentTokens !== undefined &&
-                (state.nudges.lastNudgeShownTokens ?? state.nudges.lastPerMessageNudgeTokens) !== undefined
-                    ? currentTokens - (state.nudges.lastNudgeShownTokens ?? state.nudges.lastPerMessageNudgeTokens!)
+                (state.nudges.lastNudgeShownTokens ?? state.nudges.lastPerMessageNudgeTokens) !==
+                    undefined
+                    ? currentTokens -
+                      (state.nudges.lastNudgeShownTokens ?? state.nudges.lastPerMessageNudgeTokens!)
                     : 0
             const growthStr = growth > 0 ? ` (+${fmt(growth)} since last nudge)` : ""
 
             const plainTextTokens = composition.textTokens
             // Soft nudges (growth/min-limit) are efficiency prompts, not overflow
             // warnings — a separate, stronger alert fires at maxLimit (below).
-            const efficiencyNote = effectiveTipsVariant !== "maxLimit"
-                ? `\nThis is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${COMPRESS_PHILOSOPHY}`
-                : ""
-            const sysPart = composition.systemTokens > 0
-                ? `${fmt(composition.systemTokens)} system (${pct(composition.systemTokens)}%) | `
-                : ""
+            const efficiencyNote =
+                effectiveTipsVariant !== "maxLimit"
+                    ? `\nThis is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressionPhilosophy}`
+                    : ""
+            const sysPart =
+                composition.systemTokens > 0
+                    ? `${fmt(composition.systemTokens)} system (${pct(composition.systemTokens)}%) | `
+                    : ""
             let breakdown = `${efficiencyNote}\nBreakdown: ${sysPart}${fmt(composition.toolTokens)} tool (${pct(composition.toolTokens)}%) | ${fmt(composition.summaryTokens)} summaries (${pct(composition.summaryTokens)}%) | ${fmt(composition.codeTokens)} code (${pct(composition.codeTokens)}%) | ${fmt(plainTextTokens)} text (${pct(plainTextTokens)}%)${growthStr}`
 
             const compressibleTokens =
@@ -570,7 +614,7 @@ export const injectCompressNudges = (
             }
 
             if (recommendedRanges.length > 0) {
-                breakdown += `\n\n${HOW_TO_COMPRESS_RULES}\n\n${formatCompressibleRanges(recommendedRanges, contextRanges.protected)}`
+                breakdown += `\n\n${prompts.howToCompressRules}\n\n${formatCompressibleRanges(recommendedRanges, contextRanges.protected)}`
                 breakdown += `\n💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`
             }
             breakdown += `\nUse \`acp_status({scope:"uncompressed"})\` to re-fetch compressible ranges after compressing, or \`acp_status\` for compressed block details.`
@@ -581,10 +625,14 @@ export const injectCompressNudges = (
         // maxLimit strong alert + lastNudgeShownTokens + block aging guidance
         if (effectiveTipsVariant === "maxLimit" && !emergencyNoTargets) {
             tipsText =
-                '\n\n⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n' + HOW_TO_COMPRESS_RULES + '\n\n{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }\n\nOnly use IDs from visible messages above. Compress older work first.'
+                "\n\n⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n" +
+                prompts.howToCompressRules +
+                '\n\n{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }\n\nOnly use IDs from visible messages above. Compress older work first.'
         } else if (shouldInjectNotice) {
             const emergencyPct =
-                currentTokens !== undefined && modelContextLimit !== undefined && modelContextLimit > 0
+                currentTokens !== undefined &&
+                modelContextLimit !== undefined &&
+                modelContextLimit > 0
                     ? Math.round((currentTokens / modelContextLimit) * 100)
                     : undefined
             tipsText =
@@ -600,9 +648,7 @@ export const injectCompressNudges = (
         // repeat every turn until the model actually compresses.
         state.nudges.lastNudgeShownTokens = currentTokens
         {
-            const visibleMessageIds = new Set<string>(
-                messages.map((message) => message.info.id),
-            )
+            const visibleMessageIds = new Set<string>(messages.map((message) => message.info.id))
             const blockGuidance = buildCompressedBlockGuidance(state, {
                 currentTokens,
                 modelContextLimit,
@@ -773,7 +819,7 @@ function injectVisibleIdRange(
     if (!target) return
     const segments = buildVisibleSegments(state, messages)
     if (segments.length === 0) return
-    const maxSegs = config.compress?.maxVisibleSegments ?? 50
+    const maxSegs = config.compress.maxVisibleSegments
     const rangeTag = "\n\n" + formatVisibleGuidance(segments, maxSegs)
 
     for (const part of target.parts) {

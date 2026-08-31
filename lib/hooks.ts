@@ -25,10 +25,7 @@ import {
 import { filterMessages, filterMessagesInPlace } from "./messages/shape"
 import { getLastUserMessage } from "./messages/query"
 import { truncateLargeToolOutputs } from "./messages/truncate-tools"
-import {
-    handleContextCommand,
-    handleStatsCommand,
-} from "./commands"
+import { handleContextCommand, handleStatsCommand } from "./commands"
 import { handleExportCommand } from "./commands/export"
 import { sendIgnoredMessage } from "./ui/notification"
 import { type HostPermissionSnapshot } from "./host-permissions"
@@ -37,7 +34,13 @@ import { hideConsumedCompressCalls } from "./compress/hide-consumed"
 import { hideFailedCompressCalls } from "./compress/hide-failed"
 import { applyMessageFilters } from "./messages/filter/apply"
 import { ensureBuiltinFiltersRegistered } from "./messages/filter/builtin"
-import { createSessionState, saveSessionState, syncToolCache, updatePerTurnState, type SessionStateRegistry } from "./state"
+import {
+    createSessionState,
+    saveSessionState,
+    syncToolCache,
+    updatePerTurnState,
+    type SessionStateRegistry,
+} from "./state"
 import { cacheSystemPromptTokens } from "./ui/utils"
 import { runBatchCleanup } from "./gc/merge"
 import { getCurrentTokenUsage } from "./token-utils"
@@ -125,7 +128,10 @@ export function createSystemPromptHandler(
         const runtimePrompts = prompts.getRuntimePrompts()
         const newPrompt = renderSystemPrompt(
             runtimePrompts,
-            buildProtectedToolsExtension(config.compress.protectedTools),
+            buildProtectedToolsExtension(
+                config.compress.protectedTools,
+                runtimePrompts.protectedToolsExtension,
+            ),
             state.isSubAgent && config.allowSubAgents,
         )
         if (output.system.length > 0) {
@@ -243,7 +249,8 @@ export function createChatMessageTransformHandler(
         assignMessageRefs(state, output.messages)
         const activeBlockCountBefore = state.prune.messages.activeBlockIds.size // [FIX Bug 4]
         syncCompressionBlocks(state, logger, output.messages)
-        if (state.prune.messages.activeBlockIds.size !== activeBlockCountBefore) { // [FIX Bug 4]
+        if (state.prune.messages.activeBlockIds.size !== activeBlockCountBefore) {
+            // [FIX Bug 4]
             saveSessionState(state, logger).catch(() => {}) // [FIX Bug 4] persist deactivations
         }
         syncToolCache(state, config, logger, output.messages)
@@ -349,12 +356,7 @@ export function createCommandExecuteHandler(
             })
             const messages = filterMessages(messagesResponse.data || messagesResponse)
 
-            const state = await registry.getOrCreate(
-                client,
-                input.sessionID,
-                messages,
-                config,
-            )
+            const state = await registry.getOrCreate(client, input.sessionID, messages, config)
 
             syncCompressPermissionState(state, config, hostPermissions, messages)
 
@@ -381,13 +383,7 @@ export function createCommandExecuteHandler(
             }
 
             if (sub === "help") {
-                await sendIgnoredMessage(
-                    client,
-                    input.sessionID,
-                    buildHelpText(),
-                    {},
-                    logger,
-                )
+                await sendIgnoredMessage(client, input.sessionID, buildHelpText(), {}, logger)
                 throw new Error("__DCP_CONTEXT_HANDLED__")
             }
 
@@ -489,9 +485,7 @@ export function createEventHandler(registry: SessionStateRegistry, logger: Logge
         }
 
         if (typeof part.callID === "string" && typeof part.messageID === "string") {
-            timing.startsByCallId.delete(
-                buildCompressionTimingKey(part.messageID, part.callID),
-            )
+            timing.startsByCallId.delete(buildCompressionTimingKey(part.messageID, part.callID))
         }
     }
 }

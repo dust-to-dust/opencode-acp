@@ -29,7 +29,7 @@ function buildConfig(mode: "message" | "range" = "range"): PluginConfig {
         compress: {
             mode, permission: "allow", showCompression: false, summaryBuffer: true,
             maxContextLimit: 150000, minContextLimit: 50000,
-            nudgeFrequency: 5, iterationNudgeThreshold: 15, nudgeForce: "soft",
+            nudgeFrequency: 5, nudgeGrowthTokens: 50_000, iterationNudgeThreshold: 15, nudgeForce: "soft",
             protectedTools: [], protectTags: false, protectUserMessages: false,
             minNudgeContextPercent: 15, maxSummaryLengthHard: 10000,
             minCompressRange: 5000, minNudgeGrowthRatio: 0.45,
