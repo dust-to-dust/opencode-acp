@@ -12,15 +12,6 @@ node --import tsx --test tests/<file>.test.ts
 
 Use the repository's CI workflow as the source of truth for supported Node versions. Do not encode historical test counts in documentation. Standard project checks are defined by `package.json` and the root development specification.
 
-## Test Review
-
-Every new or modified test file needs independent review by at least two separate agents before merge. Review for:
-
-- Test names that match their assertions.
-- Complete configuration fixtures, including `gc` and every field required by `PluginConfig`.
-- Inputs that actually reach the described code path.
-- Meaningful assertions rather than tautologies.
-
 ## Nudge and Growth Tests
 
 Changes to `lib/messages/inject/` or other nudge logic must cover all of the following:

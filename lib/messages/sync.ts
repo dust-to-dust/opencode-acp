@@ -35,16 +35,22 @@ export const syncCompressionBlocks = (
     const now = Date.now()
     const orderedBlocks = Array.from(messagesState.blocksById.values()).sort(sortBlocksByCreation)
 
-    // [PATCH Bug 3] Removed compressMessageId presence check.
-    // Blocks should remain active even if the compress tool call message was
-    // removed by opencode's internal compaction. The block's existence IS proof
-    // that compression happened.
     for (const block of orderedBlocks) {
         if (block.deactivatedByUser || block.deactivatedByUserDeep) {
             block.active = false
             if (block.deactivatedAt === undefined) {
                 block.deactivatedAt = now
             }
+            block.deactivatedByBlockId = undefined
+            continue
+        }
+
+        // A checkpoint is represented by its compress call. If that carrier is
+        // gone, keeping the block active would hide its sources with no visible
+        // replacement in the model context.
+        if (!block.compressMessageId || !messageIds.has(block.compressMessageId)) {
+            block.active = false
+            block.deactivatedAt ??= now
             block.deactivatedByBlockId = undefined
             continue
         }

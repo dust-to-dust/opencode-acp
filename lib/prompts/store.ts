@@ -1,10 +1,15 @@
-import { readFileSync } from "fs"
-import { basename, dirname, join } from "path"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
+import { homedir } from "os"
+import { basename, dirname, join, resolve } from "path"
 import { fileURLToPath } from "url"
 import type { Logger } from "../logger"
 
 export type PromptKey =
-    "system" | "compress-range" | "context-limit-nudge" | "turn-nudge" | "iteration-nudge"
+    | "system"
+    | "compress-range"
+    | "context-limit-nudge"
+    | "turn-nudge"
+    | "iteration-nudge"
 
 export interface RuntimePrompts {
     system: string
@@ -15,12 +20,28 @@ export interface RuntimePrompts {
     subagentExtension: string
     decompressExtension: string
     protectedToolsExtension: string
-    rangeFormatExtension: string
-    messageFormatExtension: string
-    compressionPhilosophy: string
+    compressionRequest: string
     howToCompressRules: string
-    tier2DistillRules: string
-    tier3CondenseRules: string
+}
+
+type EditablePromptField =
+    | "system"
+    | "compressRange"
+    | "contextLimitNudge"
+    | "turnNudge"
+    | "iterationNudge"
+
+interface PromptDefinition {
+    key: PromptKey
+    fileName: string
+    runtimeField: EditablePromptField
+}
+
+interface PromptPaths {
+    defaultsDir: string
+    globalOverridesDir: string
+    configDirOverridesDir: string | null
+    projectOverridesDir: string | null
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -29,30 +50,38 @@ const PROMPTS_DIR = join(
     basename(moduleDir) === "prompts" ? "../../config/prompts" : "../config/prompts",
 )
 
-const PROMPT_FILES = {
-    system: "system.md",
-    compressRange: "compress-range.md",
-    contextLimitNudge: "context-limit-nudge.md",
-    turnNudge: "turn-nudge.md",
-    iterationNudge: "iteration-nudge.md",
+const PROMPT_DEFINITIONS: PromptDefinition[] = [
+    { key: "system", fileName: "system.md", runtimeField: "system" },
+    { key: "compress-range", fileName: "compress-range.md", runtimeField: "compressRange" },
+    {
+        key: "context-limit-nudge",
+        fileName: "context-limit-nudge.md",
+        runtimeField: "contextLimitNudge",
+    },
+    { key: "turn-nudge", fileName: "turn-nudge.md", runtimeField: "turnNudge" },
+    {
+        key: "iteration-nudge",
+        fileName: "iteration-nudge.md",
+        runtimeField: "iterationNudge",
+    },
+]
+
+const FIXED_PROMPT_FILES = {
     subagentExtension: "subagent-extension.md",
     decompressExtension: "decompress-extension.md",
     protectedToolsExtension: "protected-tools.md",
-    rangeFormatExtension: "range-format.md",
-    messageFormatExtension: "message-format.md",
-    compressionPhilosophy: "compression-philosophy.md",
+    compressionRequest: "compression-request.md",
     howToCompressRules: "how-to-compress.md",
-    tier2DistillRules: "tier2-distill.md",
-    tier3CondenseRules: "tier3-condense.md",
 } as const
 
-export const PROMPT_KEYS: PromptKey[] = [
-    "system",
-    "compress-range",
-    "context-limit-nudge",
-    "turn-nudge",
-    "iteration-nudge",
-]
+export const PROMPT_KEYS: PromptKey[] = PROMPT_DEFINITIONS.map(({ key }) => key)
+
+const HTML_COMMENT_REGEX = /<!--[\s\S]*?-->/g
+const LEGACY_INLINE_COMMENT_LINE_REGEX = /^[ \t]*\/\/.*?\/\/[ \t]*$/gm
+const SYSTEM_SUBAGENT_SECTION_REGEX = /<subagent>[\s\S]*?<\/subagent>/gi
+const PROMPT_WRAPPER_REGEX =
+    /^\s*<(dcp-system-reminder|system-reminder)>\s*([\s\S]*?)\s*<\/\1>\s*$/i
+const PROMPT_WRAPPER_MARKER_REGEX = /<\/?(?:dcp-system-reminder|system-reminder)>/i
 
 export function readBundledPrompt(fileName: string): string {
     const filePath = join(PROMPTS_DIR, fileName)
@@ -65,27 +94,167 @@ export function readBundledPrompt(fileName: string): string {
         )
     }
 
-    const prompt = content.trim()
+    const prompt = content.replace(/^\uFEFF/, "").trim()
     if (!prompt) {
         throw new Error(`ACP prompt file is empty: ${filePath}`)
     }
     return prompt
 }
 
-function loadRuntimePrompts(): RuntimePrompts {
-    return Object.fromEntries(
-        Object.entries(PROMPT_FILES).map(([field, fileName]) => [
-            field,
-            readBundledPrompt(fileName),
-        ]),
-    ) as unknown as RuntimePrompts
+function createBundledRuntimePrompts(): RuntimePrompts {
+    const system = readBundledPrompt("system.md")
+    const compressRange = readBundledPrompt("compress-range.md")
+    const contextLimitNudge = readBundledPrompt("context-limit-nudge.md")
+    const turnNudge = readBundledPrompt("turn-nudge.md")
+    const iterationNudge = readBundledPrompt("iteration-nudge.md")
+
+    return {
+        system: wrapRuntimePromptContent("system", system),
+        compressRange,
+        contextLimitNudge: wrapRuntimePromptContent("context-limit-nudge", contextLimitNudge),
+        turnNudge: wrapRuntimePromptContent("turn-nudge", turnNudge),
+        iterationNudge: wrapRuntimePromptContent("iteration-nudge", iterationNudge),
+        subagentExtension: readBundledPrompt(FIXED_PROMPT_FILES.subagentExtension),
+        decompressExtension: readBundledPrompt(FIXED_PROMPT_FILES.decompressExtension),
+        protectedToolsExtension: readBundledPrompt(FIXED_PROMPT_FILES.protectedToolsExtension),
+        compressionRequest: readBundledPrompt(FIXED_PROMPT_FILES.compressionRequest),
+        howToCompressRules: readBundledPrompt(FIXED_PROMPT_FILES.howToCompressRules),
+    }
+}
+
+function resolvePromptPaths(workingDirectory: string): PromptPaths {
+    const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
+    const globalRoot = join(configHome, "opencode", "acp-prompts")
+    const configDir = process.env.OPENCODE_CONFIG_DIR
+        ? join(process.env.OPENCODE_CONFIG_DIR, "acp-prompts", "overrides")
+        : null
+    const projectRoot = findOpencodeDir(workingDirectory)
+
+    return {
+        defaultsDir: join(globalRoot, "defaults"),
+        globalOverridesDir: join(globalRoot, "overrides"),
+        configDirOverridesDir: configDir,
+        projectOverridesDir: projectRoot ? join(projectRoot, "acp-prompts", "overrides") : null,
+    }
+}
+
+function findOpencodeDir(startDirectory: string): string | null {
+    let current = resolve(startDirectory)
+    while (true) {
+        const candidate = join(current, ".opencode")
+        if (existsSync(candidate)) {
+            return candidate
+        }
+
+        const parent = dirname(current)
+        if (parent === current) {
+            return null
+        }
+        current = parent
+    }
+}
+
+function readFileIfExists(filePath: string): string | null {
+    if (!existsSync(filePath)) {
+        return null
+    }
+
+    try {
+        return readFileSync(filePath, "utf-8")
+    } catch {
+        return null
+    }
+}
+
+function stripPromptComments(content: string): string {
+    return content
+        .replace(/^\uFEFF/, "")
+        .replace(/\r\n?/g, "\n")
+        .replace(HTML_COMMENT_REGEX, "")
+        .replace(LEGACY_INLINE_COMMENT_LINE_REGEX, "")
+        .trim()
+}
+
+function toEditablePromptText(definition: PromptDefinition, content: string): string {
+    let normalized = stripPromptComments(content)
+    const wrapped = normalized.match(PROMPT_WRAPPER_REGEX)
+    if (wrapped) {
+        normalized = wrapped[2].trim()
+    } else if (PROMPT_WRAPPER_MARKER_REGEX.test(normalized)) {
+        return ""
+    }
+
+    if (definition.key === "system") {
+        normalized = normalized.replace(SYSTEM_SUBAGENT_SECTION_REGEX, "").trim()
+    }
+
+    return normalized
+}
+
+function wrapRuntimePromptContent(definition: PromptKey | string, content: string): string {
+    const normalized = content.trim()
+    if (!normalized) {
+        return ""
+    }
+    if (definition === "compress-range") {
+        return normalized
+    }
+    return `<dcp-system-reminder>\n${normalized}\n</dcp-system-reminder>`
+}
+
+function buildDefaultPromptFileContent(content: string): string {
+    return `${content.trim()}\n`
+}
+
+function buildDefaultsReadmeContent(): string {
+    const lines = [
+        "# ACP Prompt Defaults",
+        "",
+        "This directory stores reference copies of the five customizable ACP prompts.",
+        "Copy a prompt into an overrides directory to customize it.",
+        "",
+        "Override precedence (highest first):",
+        "1. `.opencode/acp-prompts/overrides/` (project)",
+        "2. `$OPENCODE_CONFIG_DIR/acp-prompts/overrides/` (config dir)",
+        "3. `~/.config/opencode/acp-prompts/overrides/` (global)",
+        "",
+    ]
+
+    for (const definition of PROMPT_DEFINITIONS) {
+        lines.push(`- \`${definition.fileName}\``)
+    }
+
+    return `${lines.join("\n")}\n`
+}
+
+function getOverrideCandidates(paths: PromptPaths, fileName: string): string[] {
+    const candidates: string[] = []
+    if (paths.projectOverridesDir) {
+        candidates.push(join(paths.projectOverridesDir, fileName))
+    }
+    if (paths.configDirOverridesDir) {
+        candidates.push(join(paths.configDirOverridesDir, fileName))
+    }
+    candidates.push(join(paths.globalOverridesDir, fileName))
+    return candidates
 }
 
 export class PromptStore {
+    private readonly logger: Logger
+    private readonly paths: PromptPaths
+    private readonly customPromptsEnabled: boolean
     private runtimePrompts: RuntimePrompts
 
-    constructor(_logger: Logger) {
-        this.runtimePrompts = loadRuntimePrompts()
+    constructor(logger: Logger, workingDirectory = process.cwd(), customPromptsEnabled = false) {
+        this.logger = logger
+        this.paths = resolvePromptPaths(workingDirectory)
+        this.customPromptsEnabled = customPromptsEnabled
+        this.runtimePrompts = createBundledRuntimePrompts()
+
+        if (customPromptsEnabled) {
+            this.ensureDefaultFiles()
+        }
+        this.reload()
     }
 
     getRuntimePrompts(): RuntimePrompts {
@@ -93,6 +262,90 @@ export class PromptStore {
     }
 
     reload(): void {
-        this.runtimePrompts = loadRuntimePrompts()
+        const nextPrompts = createBundledRuntimePrompts()
+        if (this.customPromptsEnabled) {
+            for (const definition of PROMPT_DEFINITIONS) {
+                const bundled = readBundledPrompt(definition.fileName)
+                let effective = wrapRuntimePromptContent(
+                    definition.key,
+                    toEditablePromptText(definition, bundled),
+                )
+
+                for (const overridePath of getOverrideCandidates(this.paths, definition.fileName)) {
+                    const rawOverride = readFileIfExists(overridePath)
+                    if (rawOverride === null) {
+                        continue
+                    }
+
+                    const editableOverride = toEditablePromptText(definition, rawOverride)
+                    if (!editableOverride) {
+                        this.logger.warn("Prompt override is empty or invalid after normalization", {
+                            key: definition.key,
+                            path: overridePath,
+                        })
+                        continue
+                    }
+
+                    const runtimeOverride = wrapRuntimePromptContent(
+                        definition.key,
+                        editableOverride,
+                    )
+                    if (!runtimeOverride) {
+                        this.logger.warn("Prompt override could not be wrapped for runtime", {
+                            key: definition.key,
+                            path: overridePath,
+                        })
+                        continue
+                    }
+
+                    effective = runtimeOverride
+                    break
+                }
+
+                nextPrompts[definition.runtimeField] = effective
+            }
+        }
+
+        this.runtimePrompts = nextPrompts
+    }
+
+    private ensureDefaultFiles(): void {
+        try {
+            mkdirSync(this.paths.defaultsDir, { recursive: true })
+            mkdirSync(this.paths.globalOverridesDir, { recursive: true })
+        } catch {
+            this.logger.warn("Failed to initialize prompt directories", {
+                defaultsDir: this.paths.defaultsDir,
+                globalOverridesDir: this.paths.globalOverridesDir,
+            })
+            return
+        }
+
+        for (const definition of PROMPT_DEFINITIONS) {
+            const content = buildDefaultPromptFileContent(
+                toEditablePromptText(definition, readBundledPrompt(definition.fileName)),
+            )
+            const filePath = join(this.paths.defaultsDir, definition.fileName)
+            try {
+                if (readFileIfExists(filePath) !== content) {
+                    writeFileSync(filePath, content, "utf-8")
+                }
+            } catch {
+                this.logger.warn("Failed to write default prompt file", {
+                    key: definition.key,
+                    path: filePath,
+                })
+            }
+        }
+
+        const readmePath = join(this.paths.defaultsDir, "README.md")
+        const readmeContent = buildDefaultsReadmeContent()
+        try {
+            if (readFileIfExists(readmePath) !== readmeContent) {
+                writeFileSync(readmePath, readmeContent, "utf-8")
+            }
+        } catch {
+            this.logger.warn("Failed to write defaults README", { path: readmePath })
+        }
     }
 }

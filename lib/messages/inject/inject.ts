@@ -2,16 +2,20 @@ import type { SessionState, WithParts } from "../../state"
 import type { Logger } from "../../logger"
 import type { PluginConfig } from "../../config"
 import type { RuntimePrompts } from "../../prompts/store"
-import { formatMessageIdTag, formatTokenSize, classifyMessageType } from "../../message-ids"
+import {
+    formatBlockRef,
+    formatMessageIdTag,
+    formatTokenSize,
+    classifyMessageType,
+} from "../../message-ids"
 import type { CompressionPriorityMap } from "../priority"
 import { compressPermission } from "../../compress-permission"
 import { countMessageCharacters } from "../../token-utils"
 import {
-    getLastUserMessage,
     isIgnoredUserMessage,
     isProtectedUserMessage,
-    messageHasCompress,
     messageHasCompressAttempt,
+    isSyntheticMessage,
 } from "../query"
 import { saveSessionState } from "../../state/persistence"
 import {
@@ -23,30 +27,22 @@ import {
     hasContent,
 } from "../utils"
 import {
-    addAnchor,
-    applyAnchoredNudges,
-    buildCompressibleRanges,
     computeProtectedRefs,
     computeShouldNudge,
-    countMessagesAfterIndex,
-    estimateContextComposition,
-    excludeProtectedRanges,
-    filterRecommendedRanges,
-    resolveEffectiveFloor,
-    findLastNonIgnoredMessage,
-    formatCompressibleRanges,
-    getIterationNudgeThreshold,
-    getNudgeFrequency,
     getModelInfo,
     isContextOverLimits,
+    DEFAULT_NUDGE_GROWTH_TOKENS,
+    DEFAULT_MIN_NUDGE_CONTEXT_PERCENT,
+    resolveMinNudgeContextPercent,
+    resolveMinNudgeFloorTokens,
+    applyCompressOverrides,
 } from "./utils"
-import { buildCompressedBlockGuidance } from "../../prompts/extensions/nudge"
-import { getTierTokenUsage } from "../../state/utils"
+import { messageContainsProtectedTool } from "../../compress/protected-content"
 
 /**
  * Stable seed for the ACP dynamic guidance suffix message.
  * Using a fixed seed ensures the synthetic message ID is deterministic,
- * so it won't be assigned a new mNNNNN ref on each transform call.
+ * so it won't be assigned a new A-generation ref on each transform call.
  */
 const ACP_SUFFIX_SEED = "acp-dynamic-guidance"
 
@@ -71,19 +67,16 @@ export const injectCompressNudges = (
     logger: Logger,
     messages: WithParts[],
     prompts: RuntimePrompts,
-    compressionPriorities?: CompressionPriorityMap,
+    _compressionPriorities?: CompressionPriorityMap,
     debugNotify?: (text: string) => void,
-    preCompressTokens?: number,
+    _preCompressTokens?: number,
 ): void => {
     if (compressPermission(state, config) === "deny") {
         return
     }
 
-    const lastMessage = findLastNonIgnoredMessage(messages)
-    const lastAssistantMessage = messages.findLast((message) => message.info.role === "assistant")
-
     const { providerId, modelId } = getModelInfo(messages)
-
+    config = applyCompressOverrides(config, providerId, modelId)
     const { overMaxLimit, overMinLimit, currentTokens, modelContextLimit } = isContextOverLimits(
         config,
         state,
@@ -91,180 +84,7 @@ export const injectCompressNudges = (
         modelId,
         messages,
     )
-
-    const lastUserIdx = messages.findLastIndex(
-        (m) => m.info.role === "user" && !isIgnoredUserMessage(m),
-    )
-    const currentTurnStart = lastUserIdx >= 0 ? lastUserIdx + 1 : 0
-    const currentTurnHasCompress = messages
-        .slice(currentTurnStart)
-        .some((m) => m.info.role === "assistant" && messageHasCompressAttempt(m))
-
-    if (currentTurnHasCompress) {
-        const lastCompressMsg = messages
-            .slice(currentTurnStart)
-            .findLast((m) => m.info.role === "assistant" && messageHasCompressAttempt(m))
-        const lastCompressMsgId = lastCompressMsg?.info?.id
-
-        if (lastCompressMsgId !== state.nudges.lastProcessedCompressMessageId) {
-            state.nudges.lastProcessedCompressMessageId = lastCompressMsgId
-
-            const wasNudgeTriggered = state.nudges.lastNudgeShownTokens !== undefined
-
-            state.nudges.contextLimitAnchors.clear()
-            state.nudges.turnNudgeAnchors.clear()
-            state.nudges.iterationNudgeAnchors.clear()
-            state.nudges.lastNudgeShownTokens = undefined
-            state.nudges.lastToolOutputNudgeTokens = undefined
-            // Preserve tier cadence baselines instead of resetting to undefined.
-            // Resetting to undefined causes T2/T3 to immediately re-trigger on
-            // the next turn (cadence check treats undefined as "never fired"),
-            // creating a loop: T2 fires → compress attempted → baseline reset
-            // → T2 fires again. Set to currentTokens so the growthFloor gate
-            // applies naturally.
-            state.nudges.lastTier2NudgeTokens = currentTokens
-            state.nudges.lastTier3NudgeTokens = currentTokens
-
-            const currentTurnHasSuccessfulCompress = messages
-                .slice(currentTurnStart)
-                .some((m) => m.info.role === "assistant" && messageHasCompress(m))
-
-            if (
-                currentTurnHasSuccessfulCompress &&
-                wasNudgeTriggered &&
-                !state.nudges.compressBaselineSet
-            ) {
-                const baseline = state.nudges.lastPerMessageNudgeTokens
-                const postCompress = currentTokens
-                const preCompress = preCompressTokens
-
-                if (
-                    baseline !== undefined &&
-                    postCompress !== undefined &&
-                    preCompress !== undefined &&
-                    preCompress > postCompress
-                ) {
-                    const growth = preCompress - baseline
-                    const compressed = preCompress - postCompress
-                    if (growth > 0 && compressed > 0) {
-                        const ratio = Math.min(1, compressed / growth)
-                        const adjustment = Math.min(1, ratio * 2)
-                        state.nudges.lastPerMessageNudgeTokens =
-                            baseline + Math.round((postCompress - baseline) * adjustment)
-                    } else {
-                        state.nudges.lastPerMessageNudgeTokens = postCompress
-                    }
-                } else {
-                    state.nudges.lastPerMessageNudgeTokens = postCompress
-                }
-                state.nudges.compressBaselineSet = true
-            }
-
-            state.nudges.shouldInjectThisTurn = false
-            saveSessionState(state, logger).catch(() => {})
-            return
-        }
-    } else {
-        state.nudges.lastProcessedCompressMessageId = undefined
-    }
-
-    state.nudges.compressBaselineSet = false
-
-    let anchorsChanged = false
-    let baselineReEstablished = false
-    let baselineCorrected = false
-
-    if (!overMinLimit) {
-        const hadTurnAnchors = state.nudges.turnNudgeAnchors.size > 0
-        const hadIterationAnchors = state.nudges.iterationNudgeAnchors.size > 0
-
-        if (hadTurnAnchors || hadIterationAnchors) {
-            state.nudges.turnNudgeAnchors.clear()
-            state.nudges.iterationNudgeAnchors.clear()
-            anchorsChanged = true
-        }
-    }
-
-    if (overMaxLimit) {
-        if (lastMessage) {
-            const interval = getNudgeFrequency(config)
-            const added = addAnchor(
-                state.nudges.contextLimitAnchors,
-                lastMessage.message.info.id,
-                lastMessage.index,
-                messages,
-                interval,
-            )
-            if (added) {
-                anchorsChanged = true
-            }
-        }
-    } else {
-        if (state.nudges.contextLimitAnchors.size > 0) {
-            state.nudges.contextLimitAnchors.clear()
-            anchorsChanged = true
-        }
-        if (overMinLimit) {
-            const isLastMessageUser = lastMessage?.message.info.role === "user"
-
-            if (isLastMessageUser && lastAssistantMessage) {
-                const previousSize = state.nudges.turnNudgeAnchors.size
-                state.nudges.turnNudgeAnchors.add(lastMessage.message.info.id)
-                state.nudges.turnNudgeAnchors.add(lastAssistantMessage.info.id)
-                if (state.nudges.turnNudgeAnchors.size !== previousSize) {
-                    anchorsChanged = true
-                }
-            }
-
-            const lastUserMessage = getLastUserMessage(messages)
-            if (lastUserMessage && lastMessage) {
-                const lastUserMessageIndex = messages.findIndex(
-                    (message) => message.info.id === lastUserMessage.info.id,
-                )
-                if (lastUserMessageIndex >= 0) {
-                    const messagesSinceUser = countMessagesAfterIndex(
-                        messages,
-                        lastUserMessageIndex,
-                    )
-                    const iterationThreshold = getIterationNudgeThreshold(config)
-
-                    if (
-                        lastMessage.index > lastUserMessageIndex &&
-                        messagesSinceUser >= iterationThreshold
-                    ) {
-                        const interval = getNudgeFrequency(config)
-                        const added = addAnchor(
-                            state.nudges.iterationNudgeAnchors,
-                            lastMessage.message.info.id,
-                            lastMessage.index,
-                            messages,
-                            interval,
-                        )
-
-                        if (added) {
-                            anchorsChanged = true
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    const suffixMessage = createSuffixMessage(messages)
-
-    const nudgeGrowthTokens = config.compress.nudgeGrowthTokens
-
-    // ── Growth floor gate (anti-thrashing) ──────────────────────────────
-    // Nudge output is suppressed unless context grew by at least growthFloor
-    // tokens since the last nudge baseline. Prevents re-nudging every turn
-    // after a small compress or when anchors accumulate with negligible growth.
-    //
-    //   growthFloor = max(minNudgeGrowthFloor, minNudgeGrowthRatio × nudgeGrowthTokens)
-    //   Default: max(5000, 0.45×50000) = 22500 — uniform for all models
-    //   (config override example: nudgeGrowthTokens=6000 → max(5000, 2700) = 5000)
-    //
-    // Only bypassed at emergencyThresholdPercent (default 98%) — near-overflow
-    // always fires regardless of growth.
+    const nudgeGrowthTokens = config.compress?.nudgeGrowthTokens ?? DEFAULT_NUDGE_GROWTH_TOKENS
     const growthFloor = Math.max(
         config.compress.minNudgeGrowthFloor,
         config.compress.minNudgeGrowthRatio * nudgeGrowthTokens,
@@ -274,6 +94,35 @@ export const injectCompressNudges = (
         emergencyThreshold !== undefined &&
         currentTokens !== undefined &&
         currentTokens >= emergencyThreshold
+    let stateChanged = false
+    const protectedRefs = computeProtectedRefs(messages, state, config.compress)
+    const candidateResult = buildCompressionCandidates(state, config, messages, protectedRefs)
+
+    if (state.nudges.pendingCompression) {
+        const pending = state.nudges.pendingCompression
+        const available = new Set(candidateResult.refs)
+        const pendingIsCurrent =
+            pending.candidates.length > 0 &&
+            new Set(pending.candidates).size === pending.candidates.length &&
+            pending.candidates.every((ref) => available.has(ref))
+
+        if (pendingIsCurrent) {
+            const suffixMessage = createSuffixMessage(messages)
+            if (suffixMessage) {
+                appendToLastTextPart(
+                    suffixMessage,
+                    renderCompressionRequest(prompts, pending.candidates, pending.cacheBoundary),
+                )
+                finishSuffix(messages, suffixMessage, debugNotify)
+            }
+            state.nudges.shouldInjectThisTurn = true
+            return
+        }
+
+        state.nudges.pendingCompression = undefined
+        state.nudges.shouldInjectThisTurn = false
+        stateChanged = true
+    }
 
     if (
         currentTokens !== undefined &&
@@ -282,15 +131,17 @@ export const injectCompressNudges = (
     ) {
         state.nudges.lastPerMessageNudgeTokens = currentTokens
         state.nudges.lastNudgeShownTokens = undefined
-        baselineCorrected = true
+        stateChanged = true
     }
 
-    const hasPendingNudge = state.nudges.lastNudgeShownTokens !== undefined
-    const effectiveThreshold = hasPendingNudge
-        ? Math.floor(nudgeGrowthTokens / 2)
-        : nudgeGrowthTokens
-    const growthReference =
-        state.nudges.lastNudgeShownTokens ?? state.nudges.lastPerMessageNudgeTokens
+    if (state.nudges.lastPerMessageNudgeTokens === undefined && currentTokens !== undefined) {
+        state.nudges.lastPerMessageNudgeTokens = currentTokens
+        state.nudges.shouldInjectThisTurn = false
+        saveSessionState(state, logger).catch(() => {})
+        return
+    }
+
+    const growthReference = state.nudges.lastPerMessageNudgeTokens
 
     const decision = computeShouldNudge({
         currentTokens,
@@ -298,403 +149,202 @@ export const injectCompressNudges = (
         overMinLimit,
         overMaxLimit,
         lastNudgeTokens: growthReference,
-        minNudgeContextPercent: config.compress.minNudgeContextPercent,
-        nudgeGrowthTokens: effectiveThreshold,
+        minNudgeContextPercent:
+            resolveMinNudgeContextPercent(config, providerId, modelId) ??
+            DEFAULT_MIN_NUDGE_CONTEXT_PERCENT,
+        nudgeGrowthTokens,
     })
 
     const growthSinceBaseline =
         currentTokens !== undefined && growthReference !== undefined
             ? currentTokens - growthReference
             : undefined
+    const minNudgeFloorTokens = resolveMinNudgeFloorTokens(
+        config,
+        modelContextLimit,
+        providerId,
+        modelId,
+    )
+    const overMinNudgeFloor =
+        minNudgeFloorTokens === undefined ||
+        currentTokens === undefined ||
+        currentTokens >= minNudgeFloorTokens
     const nudgeAllowed =
         emergencyOverride ||
         (decision.shouldNudge &&
+            (overMaxLimit || overMinNudgeFloor) &&
             growthSinceBaseline !== undefined &&
             growthSinceBaseline >= growthFloor)
 
-    const effectiveTipsVariant = emergencyOverride ? "maxLimit" : decision.tipsVariant
+    const meetsMinimum =
+        config.compress.minCompressRange <= 0 ||
+        candidateResult.characters >= config.compress.minCompressRange
 
-    if (state.nudges.lastPerMessageNudgeTokens === undefined && currentTokens !== undefined) {
-        // Growth is measured from the session's starting context — the system
-        // prompt is always present and is NOT growth.
-        state.nudges.lastPerMessageNudgeTokens = currentTokens
-        baselineReEstablished = true
-    }
-
-    const composition = estimateContextComposition(
-        messages,
-        state,
-        config.compress.protectedTools,
-        config.protectedFilePatterns,
-    )
-
-    // Compute protected zone first — buildCompressibleRanges uses it to split
-    // groups at the boundary so the unprotected head survives as a range.
-    const protectedRefs = computeProtectedRefs(messages, state, config.compress)
-
-    // Compute recommendation filter BEFORE applyAnchoredNudges — the result
-    // gates whether the nudge text is injected at all (Issue #216 Defect 1).
-    const contextRanges = buildCompressibleRanges(
-        messages,
-        state,
-        config.compress.protectedTools,
-        config.protectedFilePatterns,
-        protectedRefs,
-    )
-
-    const unprotectedCompressible = excludeProtectedRanges(
-        contextRanges.compressible,
-        protectedRefs,
-    )
-
-    const recommendedRanges = filterRecommendedRanges(
-        unprotectedCompressible,
-        contextRanges.protected,
-        { logger, minEffectiveTokens: resolveEffectiveFloor(config) },
-    )
-    const hasRecommendations = recommendedRanges.length > 0
-
-    const allProtected =
-        contextRanges.compressible.length === 0 && contextRanges.protected.length > 0
-    const allInProtectedZone = protectedRefs.size > 0 && unprotectedCompressible.length === 0
-    const allBelowMin = contextRanges.compressible.length > 0 && recommendedRanges.length === 0
-    const nothingToCompress = allProtected || allInProtectedZone || allBelowMin
-    // Issue #216 residual: emergency + nothing-to-compress must not demand
-    // compression (no valid targets → phantom-retry loop, incident
-    // ses_7fb5cbc8). Emit a cadence-gated /compact notice instead.
-    const emergencyNoTargets = emergencyOverride && nothingToCompress
-    const noticeCadenceMet =
-        state.nudges.lastNudgeShownTokens === undefined ||
-        (growthSinceBaseline !== undefined && growthSinceBaseline >= growthFloor)
-    const shouldInjectNudge = nudgeAllowed && !nothingToCompress
-    const shouldInjectNotice = emergencyNoTargets && noticeCadenceMet
-    let shouldInject = shouldInjectNudge || shouldInjectNotice
-
-    // Keep lastNudgeShownTokens when nothingToCompress — resetting it
-    // reintroduces the nudge loop (baseline wiped → stale growthReference
-    // → nudge fires every turn).
-
-    // Issue #216 Defect 1: only apply anchored nudge text when there IS something
-    // to compress. Previously applyAnchoredNudges ran before nothingToCompress was
-    // computed, injecting the full nudge text (with HOW_TO_COMPRESS rules) even
-    // when the filter said "nothing to compress".
-    if (shouldInjectNudge) {
-        applyAnchoredNudges(
-            state,
-            config,
-            messages,
-            prompts,
-            compressionPriorities,
-            currentTokens,
-            modelContextLimit,
-            suffixMessage,
-        )
-    }
-
-    if (state.nudges.lastPerMessageNudgeTokens === undefined && currentTokens !== undefined) {
-        // Growth is measured from the session's starting context — the system
-        // prompt is always present and is NOT growth.
-        state.nudges.lastPerMessageNudgeTokens = currentTokens
-        baselineReEstablished = true
-    }
-
-    // ── Tier 2/3 triggers — only if T1 didn't already fire ────────────
-    // Priority: T1 > T2 > T3. T1 compression reduces raw context first.
-    // Each tier has independent cadence counters — T2 firing doesn't block T3.
-    if (suffixMessage && !shouldInject) {
-        const tierUsage = getTierTokenUsage(state)
-
-        const tierChecks = [
-            {
-                triggerTier: 2 as const,
-                targetTier: 1 as const,
-                tokens: tierUsage.tier1Tokens,
-                lastNudge: state.nudges.lastTier2NudgeTokens,
-            },
-            {
-                triggerTier: 3 as const,
-                targetTier: 2 as const,
-                tokens: tierUsage.tier2Tokens,
-                lastNudge: state.nudges.lastTier3NudgeTokens,
-            },
-        ]
-
-        for (const tc of tierChecks) {
-            if (tc.tokens < nudgeGrowthTokens) continue
-            const cadenceMet =
-                tc.lastNudge === undefined ||
-                (currentTokens !== undefined && currentTokens - tc.lastNudge >= growthFloor)
-            if (!cadenceMet) continue
-
-            let candidates = [...state.prune.messages.activeBlockIds]
-                .map((id) => state.prune.messages.blocksById.get(id))
-                .filter(
-                    (b): b is NonNullable<typeof b> =>
-                        b !== undefined && b.active && (b.tier ?? 1) === tc.targetTier,
-                )
-                .sort((a, b) => a.blockId - b.blockId)
-
-            // Cross-tier safety: narrow to exclude non-target active blocks by blockId.
-            if (candidates.length >= 2) {
-                const firstId = candidates[0].blockId
-                const lastId = candidates[candidates.length - 1].blockId
-                const nonTargetInIdRange = new Set(
-                    [...state.prune.messages.activeBlockIds]
-                        .map((id) => state.prune.messages.blocksById.get(id))
-                        .filter(
-                            (b) =>
-                                b !== undefined &&
-                                b.active &&
-                                (b.tier ?? 1) !== tc.targetTier &&
-                                b.blockId > firstId &&
-                                b.blockId < lastId,
-                        )
-                        .map((b) => b!.blockId),
-                )
-
-                if (nonTargetInIdRange.size > 0) {
-                    let bestStart = 0
-                    let bestLen = 1
-                    let curStart = 0
-                    for (let i = 1; i < candidates.length; i++) {
-                        const prevId = candidates[i - 1].blockId
-                        const currId = candidates[i].blockId
-                        let hasGap = false
-                        for (const nid of nonTargetInIdRange) {
-                            if (nid > prevId && nid < currId) {
-                                hasGap = true
-                                break
-                            }
-                        }
-                        if (hasGap) {
-                            const curLen = i - curStart
-                            if (curLen > bestLen) {
-                                bestLen = curLen
-                                bestStart = curStart
-                            }
-                            curStart = i
-                        }
-                    }
-                    const finalLen = candidates.length - curStart
-                    if (finalLen > bestLen) {
-                        bestLen = finalLen
-                        bestStart = curStart
-                    }
-                    candidates = candidates.slice(bestStart, bestStart + bestLen)
-                }
-            }
-
-            if (candidates.length < 2) continue
-
-            const rules =
-                tc.triggerTier === 2 ? prompts.tier2DistillRules : prompts.tier3CondenseRules
-            const candidateTokens = candidates.reduce((s, b) => s + b.summaryTokens, 0)
-            const firstBlock = candidates[0]
-            const lastBlock = candidates[candidates.length - 1]
-            const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
-            const sourceTier = tc.triggerTier === 2 ? "Tier 1" : "Tier 2"
-            const action = tc.triggerTier === 2 ? "Distill" : "Condense"
-
-            const blockList = candidates
-                .slice(0, 10)
-                .map(
-                    (b) =>
-                        `b${b.blockId} (age=${b.survivedCount}, ${fmt(b.summaryTokens)}tok): "${b.topic}"`,
-                )
-                .join("\n")
-            const extraCount =
-                candidates.length > 10 ? `\n...and ${candidates.length - 10} more` : ""
-
-            const tierText = `\n\n[Tier ${tc.triggerTier} Trigger] ${sourceTier} summaries accumulated (${fmt(candidateTokens)} tokens across ${candidates.length} blocks). ${action} them to free context.\n\nTarget blocks (oldest first):\n${blockList}${extraCount}\n\nCompress range: \`content: [{ startId: "b${firstBlock.blockId}", endId: "b${lastBlock.blockId}", summary: "..." }]\`\nMultiple entries create separate blocks: \`content: [{ startId: "b${firstBlock.blockId}", endId: "b...", summary: "..." }, { startId: "b...", endId: "b${lastBlock.blockId}", summary: "..." }]\`\n\n${rules}`
-
-            appendToLastTextPart(suffixMessage, tierText)
-            shouldInject = true
-            logger.info(`Tier ${tc.triggerTier} trigger nudge injected`, {
-                session: state.sessionId,
-                action,
-                targetTier: tc.targetTier,
-                blocks: candidates.length,
-                candidateTokens,
-            })
-            if (tc.triggerTier === 2) {
-                state.nudges.lastTier2NudgeTokens = currentTokens
-            } else {
-                state.nudges.lastTier3NudgeTokens = currentTokens
-            }
-            break
+    if (nudgeAllowed && candidateResult.refs.length > 0 && meetsMinimum) {
+        const pending = {
+            candidates: candidateResult.refs,
+            cacheBoundary: candidateResult.refs[candidateResult.refs.length - 1],
+            createdAtTokens: currentTokens,
         }
-    }
+        state.nudges.pendingCompression = pending
+        state.nudges.lastNudgeShownTokens = currentTokens
+        state.nudges.shouldInjectThisTurn = true
+        stateChanged = true
 
-    state.nudges.shouldInjectThisTurn = shouldInject
-
-    // Decision-level audit trail: written at the default `info` level so nudge
-    // behavior is diagnosable from the daily log without `debug: true`.
-    const usagePct =
-        currentTokens !== undefined && modelContextLimit
-            ? `${((currentTokens / modelContextLimit) * 100).toFixed(1)}%`
-            : undefined
-    if (shouldInjectNudge) {
-        logger.info("Compression nudge injected", {
+        const suffixMessage = createSuffixMessage(messages)
+        if (suffixMessage) {
+            appendToLastTextPart(
+                suffixMessage,
+                renderCompressionRequest(prompts, pending.candidates, pending.cacheBoundary),
+            )
+            finishSuffix(messages, suffixMessage, debugNotify)
+        }
+        logger.info("Compression selection requested", {
             session: state.sessionId,
             trigger: emergencyOverride ? "emergency" : "growth",
+            candidates: pending.candidates.length,
+            cacheBoundary: pending.cacheBoundary,
             currentTokens,
-            usagePct,
-            growthSinceBaseline,
-            growthFloor,
-            recommendedRanges: recommendedRanges.length,
         })
-    } else if (shouldInjectNotice) {
-        logger.info("Emergency /compact notice injected (no compressible targets)", {
-            session: state.sessionId,
-            currentTokens,
-            usagePct,
-        })
-    } else if (nudgeAllowed && nothingToCompress) {
-        logger.info("Nudge suppressed: nothing to compress", {
-            session: state.sessionId,
-            reason: allProtected
-                ? "all_protected"
-                : allInProtectedZone
-                  ? "in_protected_zone"
-                  : "below_effective_floor",
-            currentTokens,
-            usagePct,
-            compressibleRanges: contextRanges.compressible.length,
-        })
-    }
-    // Only log recommendation filter when a nudge is actually being injected —
-    // avoids noisy per-turn logging when there's nothing to compress.
-    if (shouldInject && config.debug && contextRanges.compressible.length > 0) {
-        const compressible = contextRanges.compressible
-        const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
-        const lines = [
-            `[ACP Debug] Recommendation filter:`,
-            `  Input: ${compressible.length} range(s), ${fmt(compressible.reduce((s, r) => s + r.tokens, 0))} tokens`,
-            `  Output: ${recommendedRanges.length} range(s) (last segment marked dangerous)`,
-        ]
-        logger.debug(lines.join("\n"))
+    } else {
+        state.nudges.shouldInjectThisTurn = false
     }
 
-    let tipsText: string | null = null
-
-    if (shouldInject) {
-        if (suffixMessage && composition.total > 0) {
-            const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
-            const pct = (n: number) =>
-                n > 0 ? Math.max(1, Math.round((n / composition.total) * 100)) : 0
-            const growth =
-                currentTokens !== undefined &&
-                (state.nudges.lastNudgeShownTokens ?? state.nudges.lastPerMessageNudgeTokens) !==
-                    undefined
-                    ? currentTokens -
-                      (state.nudges.lastNudgeShownTokens ?? state.nudges.lastPerMessageNudgeTokens!)
-                    : 0
-            const growthStr = growth > 0 ? ` (+${fmt(growth)} since last nudge)` : ""
-
-            const plainTextTokens = composition.textTokens
-            // Soft nudges (growth/min-limit) are efficiency prompts, not overflow
-            // warnings — a separate, stronger alert fires at maxLimit (below).
-            const efficiencyNote =
-                effectiveTipsVariant !== "maxLimit"
-                    ? `\nThis is an efficiency nudge to compress early and keep context lean — not an overflow warning. A separate, stronger alert will appear if the context is actually full.\n\n${prompts.compressionPhilosophy}`
-                    : ""
-            const sysPart =
-                composition.systemTokens > 0
-                    ? `${fmt(composition.systemTokens)} system (${pct(composition.systemTokens)}%) | `
-                    : ""
-            let breakdown = `${efficiencyNote}\nBreakdown: ${sysPart}${fmt(composition.toolTokens)} tool (${pct(composition.toolTokens)}%) | ${fmt(composition.summaryTokens)} summaries (${pct(composition.summaryTokens)}%) | ${fmt(composition.codeTokens)} code (${pct(composition.codeTokens)}%) | ${fmt(plainTextTokens)} text (${pct(plainTextTokens)}%)${growthStr}`
-
-            const compressibleTokens =
-                composition.total -
-                composition.systemTokens -
-                composition.protectedTokens -
-                composition.summaryTokens
-            if (composition.protectedTokens > 0) {
-                breakdown += `\n⚠️ ${fmt(composition.protectedTokens)} tokens are protected (environment-managed tools) — not compressible. Effective compressible: ~${fmt(compressibleTokens)}.`
-            }
-
-            if (recommendedRanges.length > 0) {
-                breakdown += `\n\n${prompts.howToCompressRules}\n\n${formatCompressibleRanges(recommendedRanges, contextRanges.protected)}`
-                breakdown += `\n💡 Compress all ranges in one call (pass multiple content entries: \`content: [{...}, {...}]\`).`
-            }
-            breakdown += `\nUse \`acp_status({scope:"uncompressed"})\` to re-fetch compressible ranges after compressing, or \`acp_status\` for compressed block details.`
-
-            appendToLastTextPart(suffixMessage, breakdown)
-        }
-
-        // maxLimit strong alert + lastNudgeShownTokens + block aging guidance
-        if (effectiveTipsVariant === "maxLimit" && !emergencyNoTargets) {
-            tipsText =
-                "\n\n⚠️ Context limit reached — compress now. Prioritize consumed tool outputs.\n\n" +
-                prompts.howToCompressRules +
-                '\n\n{ "topic": "...", "content": [{ "startId": "<ID>", "endId": "<ID>", "summary": "..." }] }\n\nOnly use IDs from visible messages above. Compress older work first.'
-        } else if (shouldInjectNotice) {
-            const emergencyPct =
-                currentTokens !== undefined &&
-                modelContextLimit !== undefined &&
-                modelContextLimit > 0
-                    ? Math.round((currentTokens / modelContextLimit) * 100)
-                    : undefined
-            tipsText =
-                `\n\n🚨 Context is critically full${emergencyPct !== undefined ? ` (${emergencyPct}% of limit)` : ""} and there is nothing left that can be safely compressed.` +
-                `\nDo NOT retry compress on the same ranges — they will keep failing.` +
-                `\nYou cannot execute user commands yourself. Act now via your reply/message tool:` +
-                `\n- Inform the user that context is full and compression is exhausted` +
-                `\n- Recommend they run /acp export (archives compression summaries to a file), then /compact or start a new session` +
-                `\n- Alternatively, ask them to relax protected-tool / preserve-recent settings so compression becomes possible` +
-                `\nThen stop retrying and await the user's response.`
-        }
-        // Intentionally do NOT update lastPerMessageNudgeTokens here — nudges
-        // repeat every turn until the model actually compresses.
-        state.nudges.lastNudgeShownTokens = currentTokens
-        {
-            const visibleMessageIds = new Set<string>(messages.map((message) => message.info.id))
-            const blockGuidance = buildCompressedBlockGuidance(state, {
-                currentTokens,
-                modelContextLimit,
-                includeHint: tipsText !== null,
-                visibleMessageIds,
-            })
-            if (blockGuidance.trim() && suffixMessage) {
-                appendToLastTextPart(suffixMessage, "\n\n" + blockGuidance)
-            }
-        }
-
-        if (tipsText && suffixMessage) {
-            appendToLastTextPart(suffixMessage, tipsText)
-        }
-    }
-
-    if (suffixMessage) {
-        // [FIX #12] Nothing injected this turn → drop the empty synthetic user
-        // message. (appendToLastTextPart would no-op on "\n" anyway.)
-        if (hasContent(suffixMessage)) {
-            appendToLastTextPart(suffixMessage, "\n")
-            if (debugNotify) {
-                const text = suffixMessage.parts
-                    .filter((p) => p.type === "text")
-                    .map((p) => (p as any).text || "")
-                    .join("\n")
-                    .trim()
-                if (text) {
-                    debugNotify(text)
-                }
-            }
-        } else {
-            const idx = messages.lastIndexOf(suffixMessage)
-            if (idx !== -1) {
-                messages.splice(idx, 1)
-            }
-        }
-    }
-
-    // [FIX #60] Save on nudge too: a growth-triggered nudge updates the in-memory
-    // baseline (above) but anchorsChanged stays false when anchor sets are
-    // saturated, so the on-disk baseline went stale and the nudge refired every
-    // turn after restart.
-    if (anchorsChanged || nudgeAllowed || baselineReEstablished || baselineCorrected) {
+    if (stateChanged || nudgeAllowed) {
         saveSessionState(state, logger).catch(() => {})
     }
+}
+
+export function buildCompressionCandidates(
+    state: SessionState,
+    config: PluginConfig,
+    messages: WithParts[],
+    protectedRefs: Set<string>,
+): { refs: string[]; characters: number } {
+    const firstUserId = messages.find(
+        (message) => message.info.role === "user" && !isIgnoredUserMessage(message),
+    )?.info.id
+    const lastUserId = messages.findLast(
+        (message) => message.info.role === "user" && !isIgnoredUserMessage(message),
+    )?.info.id
+    const groupedActivities = new Map<
+        string,
+        { ref: string; time: number; characters: number; visible: boolean; blocked: boolean }
+    >()
+
+    for (const message of messages) {
+        const ref = state.messageIds.byRawId.get(message.info.id)
+        if (!ref) continue
+
+        const entry = groupedActivities.get(ref) ?? {
+            ref,
+            time: message.info.time.created,
+            characters: 0,
+            visible: false,
+            blocked: false,
+        }
+        entry.time = Math.min(entry.time, message.info.time.created)
+        entry.characters += countMessageCharacters(message)
+        const isCompressed =
+            (state.prune.messages.byMessageId.get(message.info.id)?.activeBlockIds.length ?? 0) > 0
+        const isBlocked =
+            isSyntheticMessage(message) ||
+            isIgnoredUserMessage(message) ||
+            message.info.id === firstUserId ||
+            message.info.id === lastUserId ||
+            messageHasCompressAttempt(message) ||
+            isProtectedUserMessage(config, message) ||
+            protectedRefs.has(ref) ||
+            isCompressed ||
+            messageContainsProtectedTool(
+                message,
+                config.compress.protectedTools,
+                config.protectedFilePatterns,
+            )
+        entry.visible ||= !isCompressed
+        entry.blocked ||= isBlocked
+        groupedActivities.set(ref, entry)
+    }
+
+    const visibleMessageIds = new Set(messages.map((message) => message.info.id))
+    for (const [rawId, ref] of state.messageIds.byRawId) {
+        if (!visibleMessageIds.has(rawId)) {
+            const entry = groupedActivities.get(ref)
+            if (entry) entry.blocked = true
+        }
+    }
+
+    const entries = Array.from(groupedActivities.values()).filter(
+        (entry) => entry.visible && !entry.blocked && entry.characters > 0,
+    )
+
+    for (const blockId of state.prune.messages.activeBlockIds) {
+        const block = state.prune.messages.blocksById.get(blockId)
+        if (
+            !block?.active ||
+            !block.compressMessageId ||
+            !visibleMessageIds.has(block.compressMessageId)
+        ) {
+            continue
+        }
+        const ref = block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1)
+        if (protectedRefs.has(ref)) continue
+        entries.push({
+            ref,
+            time: block.createdAt,
+            characters: block.summary.length,
+            visible: true,
+            blocked: false,
+        })
+    }
+
+    entries.sort((left, right) => left.time - right.time || left.ref.localeCompare(right.ref))
+    return {
+        refs: entries.map((entry) => entry.ref),
+        characters: entries.reduce((total, entry) => total + entry.characters, 0),
+    }
+}
+
+/*
+    const lines: string[] = []
+    for (let index = 0; index < candidates.length; index += 30) {
+        lines.push(candidates.slice(index, index + 30).join(", "))
+    }
+    return `\n<dcp-system-reminder>\nACP compression is required before continuing.\nEligible blocks (oldest first):\n${lines.join("\n")}\nCache boundary: ${cacheBoundary}. Content after this boundary and unlisted blocks are not eligible.\nCall \`compress\` now.\n</dcp-system-reminder>`
+*/
+
+function finishSuffix(
+    messages: WithParts[],
+    suffixMessage: WithParts,
+    debugNotify?: (text: string) => void,
+): void {
+    if (!hasContent(suffixMessage)) {
+        const index = messages.lastIndexOf(suffixMessage)
+        if (index !== -1) messages.splice(index, 1)
+        return
+    }
+    appendToLastTextPart(suffixMessage, "\n")
+    if (!debugNotify) return
+    const text = suffixMessage.parts
+        .filter((part) => part.type === "text")
+        .map((part) => (part as { text?: string }).text ?? "")
+        .join("\n")
+        .trim()
+    if (text) debugNotify(text)
+}
+
+function renderCompressionRequest(
+    prompts: RuntimePrompts,
+    candidates: string[],
+    cacheBoundary: string,
+): string {
+    const lines: string[] = []
+    for (let index = 0; index < candidates.length; index += 30) {
+        lines.push(candidates.slice(index, index + 30).join(", "))
+    }
+    return prompts.compressionRequest
+        .replace("{{candidates}}", lines.join("\n"))
+        .replace("{{cacheBoundary}}", cacheBoundary)
 }
 
 function resolveEmergencyThreshold(
@@ -727,7 +377,7 @@ function refNumber(ref: string): number {
 /**
  * Build disjoint visible-id segments from the surviving messages.
  *
- * Each segment is a maximal run of contiguous refs (e.g. m00003–m00007).
+ * Each segment is a maximal run of contiguous refs (e.g. A003-A007).
  * Holes between segments correspond to messages already consumed by a
  * compression block — those refs are NOT safe to target. Surfacing the
  * segments (instead of a single `first–last` span) stops the model from
@@ -846,7 +496,25 @@ export const injectMessageIds = (
             continue
         }
 
-        const messageRef = state.messageIds.byRawId.get(message.info.id)
+        let messageRef = state.messageIds.byRawId.get(message.info.id)
+        if (messageHasCompressAttempt(message)) {
+            const callIds = new Set(
+                message.parts.flatMap((part) =>
+                    part.type === "tool" && part.tool === "compress" ? [part.callID] : [],
+                ),
+            )
+            const block = [...state.prune.messages.activeBlockIds]
+                .map((blockId) => state.prune.messages.blocksById.get(blockId))
+                .find(
+                    (candidate) =>
+                        candidate?.active &&
+                        candidate.compressMessageId === message.info.id &&
+                        candidate.compressCallId !== undefined &&
+                        callIds.has(candidate.compressCallId),
+                )
+            messageRef =
+                block?.ref ?? (block ? formatBlockRef(block.blockId, block.tier ?? 1) : undefined)
+        }
         if (!messageRef) {
             continue
         }

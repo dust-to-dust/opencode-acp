@@ -15,8 +15,6 @@ function getPromptByKey(prompts: RuntimePrompts, key: PromptKey): string {
             return prompts.system
         case "compress-range":
             return prompts.compressRange
-        case "compress-message":
-            return prompts.compressMessage
         case "context-limit-nudge":
             return prompts.contextLimitNudge
         case "turn-nudge":
@@ -45,7 +43,7 @@ Options:
   --system-all             Print system prompt with both extensions
 
 Prompt keys:
-  system, compress-range, compress-message,
+  system, compress-range,
   context-limit-nudge, turn-nudge, iteration-nudge
 
 Examples:
@@ -88,17 +86,17 @@ if (showIndex >= 0) {
 }
 
 if (args.includes("--system-all")) {
-    console.log(renderSystemPrompt(runtimePrompts, undefined, true, true))
-    process.exit(0)
-}
-
-if (args.includes("--system-manual")) {
     console.log(renderSystemPrompt(runtimePrompts, undefined, true))
     process.exit(0)
 }
 
+if (args.includes("--system-manual")) {
+    console.log(renderSystemPrompt(runtimePrompts))
+    process.exit(0)
+}
+
 if (args.includes("--system-subagent")) {
-    console.log(renderSystemPrompt(runtimePrompts, undefined, false, true))
+    console.log(renderSystemPrompt(runtimePrompts, undefined, true))
     process.exit(0)
 }
 

@@ -1,10 +1,8 @@
 import type { Logger } from "../logger"
 import type { SessionState } from "../state"
-import {
-    formatProgressBar,
-    formatTokenCount,
-} from "./utils"
+import { formatProgressBar, formatTokenCount } from "./utils"
 import { PluginConfig } from "../config"
+import { formatBlockRef } from "../message-ids"
 
 interface CompressionNotificationEntry {
     blockId: number
@@ -27,7 +25,8 @@ function formatEntryRanges(
         if (!block) continue
         const count = block.effectiveMessageIds?.length || 0
         if (count === 0) continue
-        parts.push(`b${entry.blockId}: ${count} msg${count !== 1 ? "s" : ""}`)
+        const ref = block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1)
+        parts.push(`${ref}: ${count} msg${count !== 1 ? "s" : ""}`)
     }
     return parts.length > 0 ? parts.join(", ") : null
 }
@@ -62,11 +61,11 @@ function buildCompressionSummary(
     let shown = 0
     for (let i = 0; i < entries.length; i++) {
         const entry = entries[i]
-        const topic =
-            state.prune.messages.blocksById.get(entry.blockId)?.topic ?? "(unknown topic)"
-        const truncated = entry.summary.length > perEntryMax
-            ? entry.summary.slice(0, perEntryMax - 3) + "..."
-            : entry.summary
+        const topic = state.prune.messages.blocksById.get(entry.blockId)?.topic ?? "(unknown topic)"
+        const truncated =
+            entry.summary.length > perEntryMax
+                ? entry.summary.slice(0, perEntryMax - 3) + "..."
+                : entry.summary
         const section = `### ${topic}\n${truncated}`
         if (result.length + section.length + 2 > NOTIFICATION_SUMMARY_MAX_CHARS) {
             const remaining = entries.length - shown
@@ -81,9 +80,12 @@ function buildCompressionSummary(
     return result
 }
 
-function getCompressionLabel(entries: CompressionNotificationEntry[]): string {
+function getCompressionLabel(entries: CompressionNotificationEntry[], state: SessionState): string {
     const runId = entries[0]?.runId
-    const blockIds = entries.map((e) => `b${e.blockId}`)
+    const blockIds = entries.map((entry) => {
+        const block = state.prune.messages.blocksById.get(entry.blockId)
+        return block?.ref ?? formatBlockRef(entry.blockId, block?.tier ?? 1)
+    })
     if (runId === undefined) {
         return "Compression"
     }
@@ -122,8 +124,9 @@ export async function sendCompressNotification(
     }
 
     const logBlockIds = entries.map((e) => e.blockId)
-    const logTopics = entries
-        .map((e) => state.prune.messages.blocksById.get(e.blockId)?.topic ?? "?")
+    const logTopics = entries.map(
+        (e) => state.prune.messages.blocksById.get(e.blockId)?.topic ?? "?",
+    )
     const logCompressedTokens = entries.reduce((sum, e) => {
         const block = state.prune.messages.blocksById.get(e.blockId)
         return sum + (block?.effectiveCompressedTokens ?? block?.compressedTokens ?? 0)
@@ -143,7 +146,7 @@ export async function sendCompressNotification(
     }
 
     let message: string
-    const compressionLabel = getCompressionLabel(entries)
+    const compressionLabel = getCompressionLabel(entries, state)
     const summary = buildCompressionSummary(entries, state)
     const summaryTokens = entries.reduce((total, entry) => total + entry.summaryTokens, 0)
     const summaryTokensStr = formatTokenCount(summaryTokens)
@@ -201,10 +204,7 @@ export async function sendCompressNotification(
               ? entryBlockTopics.join(" · ")
               : "(unknown topic)")
 
-    const contextTokensAfter = Math.max(
-        0,
-        contextTokensBefore - compressedTokens + summaryTokens,
-    )
+    const contextTokensAfter = Math.max(0, contextTokensBefore - compressedTokens + summaryTokens)
     const notificationHeader = `▣ ACP | ${formatContextTransition(
         contextTokensBefore,
         contextTokensAfter,

@@ -1,11 +1,11 @@
 import type { SessionState, WithParts } from "./state"
-import { isIgnoredUserMessage } from "./messages/query"
+import { isIgnoredUserMessage, messageHasCompressAttempt } from "./messages/query"
 
-const MESSAGE_REF_REGEX = /^m(\d{4,5})$/
-const BLOCK_REF_REGEX = /^b([1-9]\d*)$/
+const MESSAGE_REF_REGEX = /^a(\d{3,})$/
+const BLOCK_REF_REGEX = /^((?:[b-z]|[a-z]{2,}))(\d{3,})$/
 const MESSAGE_ID_TAG_NAME = "dcp-message-id"
 
-const MESSAGE_REF_WIDTH = 5
+const REF_WIDTH = 3
 const MESSAGE_REF_MIN_INDEX = 1
 const MESSAGE_REF_MAX_INDEX = 99999
 
@@ -31,14 +31,44 @@ export function formatMessageRef(index: number): string {
             `Message ID index out of bounds: ${index}. Supported range is ${MESSAGE_REF_MIN_INDEX}-${MESSAGE_REF_MAX_INDEX}.`,
         )
     }
-    return `m${index.toString().padStart(MESSAGE_REF_WIDTH, "0")}`
+    return `A${index.toString().padStart(REF_WIDTH, "0")}`
 }
 
-export function formatBlockRef(blockId: number): string {
+export function formatBlockRef(blockId: number, tier = 1): string {
     if (!Number.isInteger(blockId) || blockId < 1) {
         throw new Error(`Invalid block ID: ${blockId}`)
     }
-    return `b${blockId}`
+    if (!Number.isInteger(tier) || tier < 1) {
+        throw new Error(`Invalid compression generation: ${tier}`)
+    }
+    return `${formatGenerationLabel(tier)}${blockId.toString().padStart(REF_WIDTH, "0")}`
+}
+
+/** A is raw activity (level 0), B is one compression, C is two, and so on. */
+export function formatGenerationLabel(level: number): string {
+    if (!Number.isInteger(level) || level < 0) {
+        throw new Error(`Invalid context generation: ${level}`)
+    }
+
+    let value = level + 1
+    let label = ""
+    while (value > 0) {
+        value--
+        label = String.fromCharCode(65 + (value % 26)) + label
+        value = Math.floor(value / 26)
+    }
+    return label
+}
+
+export function parseGenerationLabel(label: string): number | null {
+    const normalized = label.trim().toUpperCase()
+    if (!/^[A-Z]+$/.test(normalized)) return null
+
+    let value = 0
+    for (const char of normalized) {
+        value = value * 26 + (char.charCodeAt(0) - 64)
+    }
+    return value - 1
 }
 
 export function parseMessageRef(ref: string): number | null {
@@ -63,8 +93,19 @@ export function parseBlockRef(ref: string): number | null {
     if (!match) {
         return null
     }
-    const id = Number.parseInt(match[1], 10)
+    const generation = parseGenerationLabel(match[1])
+    if (generation === null || generation < 1) {
+        return null
+    }
+    const id = Number.parseInt(match[2], 10)
     return Number.isInteger(id) ? id : null
+}
+
+export function parseBlockGeneration(ref: string): number | null {
+    const match = ref.trim().toLowerCase().match(BLOCK_REF_REGEX)
+    if (!match) return null
+    const generation = parseGenerationLabel(match[1])
+    return generation !== null && generation >= 1 ? generation : null
 }
 
 export function parseBoundaryId(id: string): ParsedBoundaryId | null {
@@ -82,7 +123,7 @@ export function parseBoundaryId(id: string): ParsedBoundaryId | null {
     if (blockId !== null) {
         return {
             kind: "compressed-block",
-            ref: formatBlockRef(blockId),
+            ref: formatBlockRef(blockId, parseBlockGeneration(normalized) ?? 1),
             blockId,
         }
     }
@@ -152,8 +193,15 @@ export function assignMessageRefs(state: SessionState, messages: WithParts[]): n
     let assigned = 0
     let skippedSubAgentPrompt = false
 
+    const activityMessages: WithParts[] = []
     for (const message of messages) {
         if (isIgnoredUserMessage(message)) {
+            continue
+        }
+
+        // Compression calls are checkpoint carriers. They receive the B/C/...
+        // block ref created by that call, never a new raw A ref.
+        if (messageHasCompressAttempt(message)) {
             continue
         }
 
@@ -167,22 +215,62 @@ export function assignMessageRefs(state: SessionState, messages: WithParts[]): n
             continue
         }
         // [FIX Bug 29] Skip synthetic messages created by DCP
-        if (rawMessageId.startsWith("msg_dcp_summary_") || rawMessageId.startsWith("msg_dcp_text_")) {
+        if (
+            rawMessageId.startsWith("msg_dcp_summary_") ||
+            rawMessageId.startsWith("msg_dcp_text_")
+        ) {
             continue
         }
 
-        const existingRef = state.messageIds.byRawId.get(rawMessageId)
-        if (existingRef) {
-            if (state.messageIds.byRef.get(existingRef) !== rawMessageId) {
-                state.messageIds.byRef.set(existingRef, rawMessageId)
-            }
-            continue
-        }
+        activityMessages.push(message)
+    }
 
-        const ref = allocateNextMessageRef(state)
-        state.messageIds.byRawId.set(rawMessageId, ref)
-        state.messageIds.byRef.set(ref, rawMessageId)
-        assigned++
+    const parent = new Map<string, string>()
+    const firstMessageByCallId = new Map<string, string>()
+    const find = (rawId: string): string => {
+        const current = parent.get(rawId) ?? rawId
+        if (current === rawId) return rawId
+        const root = find(current)
+        parent.set(rawId, root)
+        return root
+    }
+    const union = (left: string, right: string): void => {
+        const leftRoot = find(left)
+        const rightRoot = find(right)
+        if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot)
+    }
+
+    for (const message of activityMessages) {
+        const rawId = message.info.id
+        parent.set(rawId, rawId)
+        for (const part of message.parts ?? []) {
+            if (part.type !== "tool" || typeof part.callID !== "string" || !part.callID) continue
+            const firstRawId = firstMessageByCallId.get(part.callID)
+            if (firstRawId) union(firstRawId, rawId)
+            else firstMessageByCallId.set(part.callID, rawId)
+        }
+    }
+
+    const groups = new Map<string, WithParts[]>()
+    for (const message of activityMessages) {
+        const root = find(message.info.id)
+        const group = groups.get(root) ?? []
+        group.push(message)
+        groups.set(root, group)
+    }
+
+    for (const group of groups.values()) {
+        const ref =
+            group
+                .map((message) => state.messageIds.byRawId.get(message.info.id))
+                .find((candidate): candidate is string => candidate !== undefined) ??
+            allocateNextMessageRef(state)
+
+        for (const message of group) {
+            if (!state.messageIds.byRawId.has(message.info.id)) assigned++
+            state.messageIds.byRawId.set(message.info.id, ref)
+        }
+        state.messageIds.byRef.set(ref, group[0]!.info.id)
     }
 
     return assigned

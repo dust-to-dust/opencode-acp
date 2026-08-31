@@ -1,10 +1,1 @@
-<system-reminder>
-You've been iterating for a while. If any earlier work is closed and unlikely to be referenced, compress it now.
-
-{
-  "topic": "Short Label",
-  "content": [{ "startId": "<visible message ID>", "endId": "<visible message ID>", "summary": "..." }]
-}
-
-⚠️ ONLY use IDs from  tags visible above. Do NOT invent or copy example IDs.
-</system-reminder>
+You have been iterating for a while. If earlier work is closed and unlikely to be referenced again, compress it now so the current task stays focused. You can decompress checkpoints later if exact details are needed.

@@ -1,92 +1,192 @@
 import { tool } from "@opencode-ai/plugin"
-import { type ToolFactoryContext, resolveToolContext } from "./types"
-import { countMessageCharacters, countTokens } from "../token-utils"
+import { countAllMessageTokens, countTokens, getCurrentTokenUsage } from "../token-utils"
+import { formatBlockRef, parseBlockRef, parseMessageRef } from "../message-ids"
+import { saveSessionState } from "../state/persistence"
+import type { WithParts } from "../state"
 import {
     finalizeSession,
     prepareSession,
-    snapshotCompressionState,
     restoreCompressionState,
-    identifyPhantomPlans,
-    partitionPhantomPlans,
-    buildPhantomErrorMessage,
+    snapshotCompressionState,
     type NotificationEntry,
 } from "./pipeline"
 import {
-    appendProtectedPromptInfo,
-    appendProtectedTools,
-    appendProtectedUserMessages,
-    filterLastUserMessage,
-    filterProtectedRecentMessages,
-    filterProtectedToolMessages,
-} from "./protected-content"
-import {
-    appendMissingBlockSummaries,
-    injectBlockPlaceholders,
-    parseBlockPlaceholders,
-    resolveRanges,
-    validateArgs,
-    validateNonOverlapping,
-    validateSummaryPlaceholders,
-} from "./range-utils"
-import {
-    COMPRESSED_BLOCK_HEADER,
     allocateBlockId,
     allocateRunId,
     applyCompressionState,
     wrapCompressedSummary,
 } from "./state"
-import type { CompressRangeToolArgs } from "./types"
-import { resolveKeepMarkers } from "./keep-markers"
-import { buildQualityRejectionError, evaluatePreCommitQuality } from "./quality-gate"
+import {
+    type CompressSelectionToolArgs,
+    type SelectionResolution,
+    type ToolFactoryContext,
+    resolveToolContext,
+} from "./types"
 
-function buildSchema(maxSummaryLengthHard: number) {
+function buildSchema() {
     return {
-        topic: tool.schema
-            .string()
-            .optional()
+        keep: tool.schema
+            .array(tool.schema.string())
             .describe(
-                "Fallback topic for entries without their own. Omit when each content entry specifies its own topic.",
+                "Candidate block IDs to keep verbatim. Any listed candidate omitted here is compressed.",
             ),
-        content: tool.schema
-            .array(
-                tool.schema.object({
-                    topic: tool.schema
-                        .string()
-                        .optional()
-                        .describe(
-                            "Short label (3-5 words) for THIS range, e.g. 'Auth System Exploration'. Omit to use top-level topic. When compressing multiple unrelated ranges, give each its own topic for better quality.",
-                        ),
-                    startId: tool.schema
-                        .string()
-                        .describe(
-                            "Message or block ID marking the beginning of range (e.g. m00001, b2)",
-                        ),
-                    endId: tool.schema
-                        .string()
-                        .describe("Message or block ID marking the end of range (e.g. m00012, b5)"),
-                    summary: tool.schema
-                        .string()
-                        .describe(
-                            "Complete technical summary replacing all content in range. Keep only essential details (conclusions, file paths, decisions, exact values, etc.).",
-                        ),
-                }),
+        confirmedFacts: tool.schema
+            .array(tool.schema.string())
+            .describe(
+                "Durable facts, decisions, constraints, and results from the blocks being compressed.",
+            ),
+        nextSteps: tool.schema
+            .array(tool.schema.string())
+            .describe(
+                "Concrete unfinished work that must survive compression. Use [] when none remains.",
+            ),
+    }
+}
+
+function renderCheckpointSummary(confirmedFacts: string[], nextSteps: string[]): string {
+    const sections: string[] = []
+    if (confirmedFacts.length > 0) {
+        sections.push(
+            `Confirmed facts:\n${confirmedFacts.map((fact) => `- ${fact.trim()}`).join("\n")}`,
+        )
+    }
+    if (nextSteps.length > 0) {
+        sections.push(`Next steps:\n${nextSteps.map((step) => `- ${step.trim()}`).join("\n")}`)
+    }
+    return sections.join("\n\n")
+}
+
+function toolIdsForMessages(messages: WithParts[]): string[] {
+    const ids = new Set<string>()
+    for (const message of messages) {
+        for (const part of message.parts ?? []) {
+            if (part.type === "tool" && typeof part.callID === "string") {
+                ids.add(part.callID)
+            }
+        }
+    }
+    return [...ids]
+}
+
+function buildSelection(
+    input: CompressSelectionToolArgs,
+    candidates: string[],
+    rawMessages: WithParts[],
+    state: ReturnType<typeof resolveToolContext>["state"],
+): {
+    droppedRefs: string[]
+    consumedBlockIds: number[]
+    selection: SelectionResolution
+    anchorMessageId: string
+} {
+    const normalizedKeep = input.keep.map((ref) => ref.trim().toUpperCase())
+    if (new Set(normalizedKeep).size !== normalizedKeep.length) {
+        throw new Error("keep contains duplicate block IDs.")
+    }
+
+    const candidateSet = new Set(candidates)
+    const unknown = normalizedKeep.filter((ref) => !candidateSet.has(ref))
+    if (unknown.length > 0) {
+        throw new Error(
+            `keep contains blocks outside the pending candidate set: ${unknown.join(", ")}. Use only the IDs in the current ACP compression request.`,
+        )
+    }
+
+    const keepSet = new Set(normalizedKeep)
+    const droppedRefs = candidates.filter((ref) => !keepSet.has(ref))
+    const rawById = new Map(rawMessages.map((message) => [message.info.id, message]))
+    const rawIndexById = new Map(rawMessages.map((message, index) => [message.info.id, index]))
+    const directMessageIds: string[] = []
+    const consumedBlockIds: number[] = []
+
+    for (const ref of droppedRefs) {
+        if (parseMessageRef(ref) !== null) {
+            const rawIds = Array.from(state.messageIds.byRawId.entries())
+                .filter(([, messageRef]) => messageRef === ref)
+                .map(([rawId]) => rawId)
+            if (rawIds.length === 0 || rawIds.some((rawId) => !rawById.has(rawId))) {
+                throw new Error(
+                    `Pending block ${ref} is stale. Wait for ACP to issue a fresh request.`,
+                )
+            }
+            for (const rawId of rawIds) {
+                if ((state.prune.messages.byMessageId.get(rawId)?.activeBlockIds.length ?? 0) > 0) {
+                    throw new Error(
+                        `Pending block ${ref} is already compressed. Wait for a fresh request.`,
+                    )
+                }
+                directMessageIds.push(rawId)
+            }
+            continue
+        }
+
+        const blockId = parseBlockRef(ref)
+        const block = blockId === null ? undefined : state.prune.messages.blocksById.get(blockId)
+        const expectedRef = block
+            ? (block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1))
+            : undefined
+        if (!block || !block.active || expectedRef !== ref) {
+            throw new Error(
+                `Pending checkpoint ${ref} is stale. Wait for ACP to issue a fresh request.`,
             )
-            .describe(
-                "One or more ranges to compress, each with start/end boundaries and a summary. When compressing multiple unrelated ranges in one call, give each its own topic.",
-            ),
-        summaryMaxChars: tool.schema
-            .number()
-            .optional()
-            .describe(
-                `Override max summary length (default max: ${maxSummaryLengthHard} chars). Use when content is important and needs more detail — don't lose critical info just to fit the limit.`,
-            ),
-        dangerous: tool.schema
-            .boolean()
-            .optional()
-            .describe(
-                "Set to true ONLY when you are certain the most recent message(s) must be compressed. Required when a range includes the tail of the conversation.",
-            ),
-        acknowledgeRisk: tool.schema.boolean().optional(),
+        }
+        consumedBlockIds.push(block.blockId)
+    }
+
+    const directMessages = directMessageIds
+        .map((id) => rawById.get(id))
+        .filter((message): message is WithParts => message !== undefined)
+    const messageTokenById = new Map(
+        directMessages.map((message) => [message.info.id, countAllMessageTokens(message)]),
+    )
+    const firstRawId = directMessageIds[0]
+    const lastRawId = directMessageIds[directMessageIds.length - 1]
+    const firstBlock = state.prune.messages.blocksById.get(consumedBlockIds[0] ?? -1)
+    const lastBlock = state.prune.messages.blocksById.get(
+        consumedBlockIds[consumedBlockIds.length - 1] ?? -1,
+    )
+    const startReference = firstRawId
+        ? ({
+              kind: "message",
+              rawIndex: rawIndexById.get(firstRawId) ?? 0,
+              messageId: firstRawId,
+          } as const)
+        : ({
+              kind: "compressed-block",
+              rawIndex: rawIndexById.get(firstBlock?.compressMessageId ?? "") ?? 0,
+              blockId: firstBlock?.blockId,
+              anchorMessageId: firstBlock?.anchorMessageId,
+          } as const)
+    const endReference = lastRawId
+        ? ({
+              kind: "message",
+              rawIndex: rawIndexById.get(lastRawId) ?? 0,
+              messageId: lastRawId,
+          } as const)
+        : ({
+              kind: "compressed-block",
+              rawIndex: rawIndexById.get(lastBlock?.compressMessageId ?? "") ?? 0,
+              blockId: lastBlock?.blockId,
+              anchorMessageId: lastBlock?.anchorMessageId,
+          } as const)
+    const inheritedAnchor = lastBlock?.anchorMessageId ?? firstBlock?.anchorMessageId
+    const anchorMessageId = lastRawId ?? inheritedAnchor ?? directMessageIds[0]
+    if (!anchorMessageId && droppedRefs.length > 0) {
+        throw new Error("The pending candidate set no longer resolves to conversation content.")
+    }
+
+    return {
+        droppedRefs,
+        consumedBlockIds,
+        anchorMessageId: anchorMessageId ?? "",
+        selection: {
+            startReference,
+            endReference,
+            messageIds: directMessageIds,
+            messageTokenById,
+            toolIds: toolIdsForMessages(directMessages),
+            requiredBlockIds: consumedBlockIds,
+        },
     }
 }
 
@@ -95,339 +195,112 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
     const runtimePrompts = factoryCtx.prompts.getRuntimePrompts()
 
     return tool({
-        description: runtimePrompts.compressRange + runtimePrompts.rangeFormatExtension,
-        args: buildSchema(factoryCtx.config.compress.maxSummaryLengthHard),
+        description: runtimePrompts.compressRange,
+        args: buildSchema(),
         async execute(args, toolCtx) {
             const ctx = resolveToolContext(factoryCtx, toolCtx.sessionID)
-            const input = args as CompressRangeToolArgs
-            validateArgs(input)
+            const input = args as CompressSelectionToolArgs
+            const pending = ctx.state.nudges.pendingCompression
+            if (!pending) {
+                throw new Error(
+                    "ACP has no pending compression request. Continue the task until ACP asks for compression.",
+                )
+            }
 
-            const maxLen =
-                (args as { summaryMaxChars?: number }).summaryMaxChars ??
-                ctx.config.compress.maxSummaryLengthHard
-            for (const entry of input.content) {
-                if (entry.summary.length > maxLen) {
-                    throw new Error(
-                        `Summary too long (${entry.summary.length} chars, max ${maxLen}).\n1. If this summary is nearly the same size as the original content, it may not be worth compressing — skip it.\n2. Strip noise (failed attempts, verbose outputs) but keep project-critical details (file paths, decisions, exact values).\n3. For important content needing detail, pass summaryMaxChars to increase the limit — don't lose critical info just to fit. Example: add "summaryMaxChars": 6000 to the tool call args.`,
+            const { rawMessages } = await prepareSession(ctx, toolCtx, "Select context blocks")
+            const candidates = [...pending.candidates]
+            const plan = buildSelection(input, candidates, rawMessages, ctx.state)
+
+            if (plan.droppedRefs.length === 0) {
+                const snapshot = snapshotCompressionState(ctx.state)
+                try {
+                    ctx.state.nudges.pendingCompression = undefined
+                    ctx.state.nudges.lastNudgeShownTokens = undefined
+                    ctx.state.nudges.lastPerMessageNudgeTokens = getCurrentTokenUsage(
+                        ctx.state,
+                        rawMessages,
                     )
+                    ctx.state.nudges.shouldInjectThisTurn = false
+                    await saveSessionState(ctx.state, ctx.logger)
+                } catch (error) {
+                    restoreCompressionState(ctx.state, snapshot)
+                    throw error
                 }
+                return "Kept every candidate block. No checkpoint was created; continue the task."
+            }
+
+            const facts = input.confirmedFacts.map((fact) => fact.trim()).filter(Boolean)
+            const steps = input.nextSteps.map((step) => step.trim()).filter(Boolean)
+            const summary = renderCheckpointSummary(facts, steps)
+            if (!summary) {
+                throw new Error(
+                    "confirmedFacts and nextSteps cannot both be empty when blocks are compressed.",
+                )
+            }
+            if (summary.length > ctx.config.compress.maxSummaryLengthHard) {
+                throw new Error(
+                    `Checkpoint too long (${summary.length} chars, max ${ctx.config.compress.maxSummaryLengthHard}). Keep more source blocks or retain fewer durable facts.`,
+                )
             }
 
             const callId =
                 typeof (toolCtx as unknown as { callID?: unknown }).callID === "string"
                     ? (toolCtx as unknown as { callID: string }).callID
                     : undefined
-
-            const { rawMessages, searchContext } = await prepareSession(
-                ctx,
-                toolCtx,
-                `Compress Range: ${input.topic ?? "(batch)"}`,
-            )
-            const resolvedPlans = resolveRanges(input, searchContext, ctx.state, ctx.logger)
-            validateNonOverlapping(resolvedPlans)
-
-            const filteredPlans = resolvedPlans
-                .map((plan) => ({
-                    ...plan,
-                    selection: filterProtectedToolMessages(
-                        plan.selection,
-                        searchContext,
-                        ctx.config.compress.protectedTools,
-                        ctx.config.protectedFilePatterns,
-                    ),
-                }))
-                .map((plan) => ({
-                    ...plan,
-                    selection: filterLastUserMessage(
-                        plan.selection,
-                        searchContext,
-                        ctx.state,
-                        ctx.config.compress,
-                    ),
-                }))
-                .map((plan) => ({
-                    ...plan,
-                    selection: filterProtectedRecentMessages(
-                        plan.selection,
-                        searchContext,
-                        ctx.state,
-                        ctx.config.compress,
-                    ),
-                }))
-                .filter((plan) => plan.selection.messageIds.length > 0)
-
-            if (filteredPlans.length === 0) {
-                throw new Error(
-                    "All selected messages were filtered out (protected tool outputs and/or the last user message). They must remain in visible context.",
-                )
-            }
-
-            const minCompressRange = ctx.config.compress.minCompressRange
-            if (minCompressRange > 0) {
-                let totalChars = 0
-                const counted = new Set<string>()
-                for (const plan of filteredPlans) {
-                    for (const messageId of plan.selection.messageIds) {
-                        if (counted.has(messageId)) continue
-                        counted.add(messageId)
-                        const rawMessage = searchContext.rawMessagesById.get(messageId)
-                        if (rawMessage) {
-                            totalChars += countMessageCharacters(rawMessage)
-                        }
-                    }
-                }
-                // Intentionally throws after prepareSession: the char count needs
-                // resolved plans + rawMessages, only available post-prepare. No state
-                // is persisted (finalizeSession/saveSessionState never runs).
-                if (totalChars < minCompressRange) {
-                    throw new Error(
-                        `Range too small (${totalChars} chars, min ${minCompressRange}). Not worth compressing — overhead exceeds savings.`,
-                    )
-                }
-            }
-
-            const notifications: NotificationEntry[] = []
-            let preparedPlans: Array<{
-                entry: (typeof filteredPlans)[number]["entry"]
-                selection: (typeof filteredPlans)[number]["selection"]
-                anchorMessageId: string
-                finalSummary: string
-                consumedBlockIds: number[]
-            }> = []
-            let totalCompressedMessages = 0
-
-            for (const plan of filteredPlans) {
-                const parsedPlaceholders = parseBlockPlaceholders(plan.entry.summary)
-                validateSummaryPlaceholders(
-                    parsedPlaceholders,
-                    plan.selection.requiredBlockIds,
-                    plan.selection.startReference,
-                    plan.selection.endReference,
-                    searchContext.summaryByBlockId,
-                    ctx.logger,
-                )
-
-                const injected = injectBlockPlaceholders(
-                    plan.entry.summary,
-                    parsedPlaceholders,
-                    searchContext.summaryByBlockId,
-                    plan.selection.startReference,
-                    plan.selection.endReference,
-                )
-
-                const summaryWithUsers = appendProtectedUserMessages(
-                    injected.expandedSummary,
-                    plan.selection,
-                    searchContext,
-                    ctx.state,
-                    ctx.config.compress.protectUserMessages,
-                )
-
-                const summaryWithPromptInfo = appendProtectedPromptInfo(
-                    summaryWithUsers,
-                    plan.selection,
-                    searchContext,
-                    ctx.state,
-                    ctx.config.compress.protectTags,
-                )
-
-                const summaryWithTools = await appendProtectedTools(
-                    ctx.client,
-                    ctx.state,
-                    summaryWithPromptInfo,
-                    plan.selection,
-                    searchContext,
-                    ctx.config.compress.protectedTools,
-                    ctx.config.protectedFilePatterns,
-                )
-
-                const completedSummary = appendMissingBlockSummaries(
-                    summaryWithTools,
-                    [],
-                    searchContext.summaryByBlockId,
-                    injected.consumedBlockIds,
-                )
-
-                // [Plan B] Auto-detect consumed blocks: requiredBlockIds already
-                // covers every active block whose anchor is in [start, end]; merge
-                // with boundary blocks (when start/end is a bN ref) and dedup.
-                const boundaryConsumed = extractBoundaryConsumedBlocks(
-                    plan.selection.startReference,
-                    plan.selection.endReference,
-                )
-                const seenConsumed = new Set<number>()
-                const mergeConsumedBlockIds = [
-                    ...plan.selection.requiredBlockIds,
-                    ...boundaryConsumed,
-                ].filter((id) => {
-                    if (seenConsumed.has(id)) return false
-                    seenConsumed.add(id)
-                    return true
-                })
-
-                preparedPlans.push({
-                    entry: plan.entry,
-                    selection: plan.selection,
-                    anchorMessageId: plan.anchorMessageId,
-                    finalSummary: completedSummary.expandedSummary,
-                    consumedBlockIds: mergeConsumedBlockIds,
-                })
-            }
-
-            // Issue #290: drop phantom entries and compress the rest. Must run
-            // BEFORE snapshot/apply so dropped entries leave no ghost blocks.
-            const partition = partitionPhantomPlans(
-                identifyPhantomPlans(
-                    ctx.state,
-                    preparedPlans.map((p) => ({
-                        messageIds: p.selection.messageIds,
-                        consumedBlockIds: p.consumedBlockIds,
-                    })),
-                ),
-                preparedPlans.length,
-            )
-            let phantomSkipNotice: string | null = null
-            if (partition.kind === "all-phantom") {
-                ctx.logger.warn("Batch compress: ALL entries phantom", {
-                    totalCount: preparedPlans.length,
-                    details: partition.details,
-                })
-                throw new Error(buildPhantomErrorMessage(partition.details))
-            }
-            if (partition.kind === "partial") {
-                ctx.logger.warn("Batch compress: phantom entries detected", {
-                    phantomCount: partition.dropIndices.length,
-                    totalCount: preparedPlans.length,
-                    phantomIndices: partition.dropIndices,
-                    details: partition.details,
-                })
-                const dropSet = new Set(partition.dropIndices)
-                preparedPlans = preparedPlans.filter((_, i) => !dropSet.has(i))
-                phantomSkipNotice = partition.notice
-            }
-
-            const acknowledgeRisk = (args as { acknowledgeRisk?: boolean }).acknowledgeRisk === true
-
-            const qualityGateRetryPendingBefore = ctx.state.qualityGateRetryPending
-
-            // #301: the model routinely carries acknowledgeRisk over from
-            // non-quality errors (e.g. argument validation failures), which
-            // used to hard-fail with "no rejection pending". Without a pending
-            // quality-gate rejection the flag is a no-op instead — quality
-            // still runs. Only a real rejection arms the bypass.
-            const bypassQuality = acknowledgeRisk && ctx.state.qualityGateRetryPending
-            const ignoredAcknowledgeRisk = acknowledgeRisk && !ctx.state.qualityGateRetryPending
-            if (ignoredAcknowledgeRisk) {
-                ctx.logger.warn(
-                    "compress: acknowledgeRisk ignored — no quality gate rejection pending",
-                )
-            }
-            ctx.state.qualityGateRetryPending = false
-            if (!bypassQuality) {
-                for (const plan of preparedPlans) {
-                    const result = evaluatePreCommitQuality(
-                        rawMessages,
-                        plan.selection.messageIds,
-                        plan.selection.messageTokenById,
-                        plan.finalSummary,
-                        ctx.config,
-                        ctx.logger,
-                    )
-                    if (result && !result.passed) {
-                        ctx.state.qualityGateRetryPending = true
-                        throw buildQualityRejectionError(
-                            {
-                                startId: plan.entry.startId,
-                                endId: plan.entry.endId,
-                                summary: plan.finalSummary,
-                                messageIds: plan.selection.messageIds,
-                                messageTokenById: plan.selection.messageTokenById,
-                            },
-                            result,
-                            runtimePrompts,
-                        )
-                    }
-                }
-            }
-
             const snapshot = snapshotCompressionState(ctx.state)
             const runId = allocateRunId(ctx.state)
+            const blockId = allocateBlockId(ctx.state)
+            const outputTier =
+                1 +
+                Math.max(
+                    0,
+                    ...plan.consumedBlockIds.map(
+                        (id) => ctx.state.prune.messages.blocksById.get(id)?.tier ?? 1,
+                    ),
+                )
+            const storedSummary = wrapCompressedSummary(blockId, outputTier, summary)
+            const summaryTokens = countTokens(storedSummary)
+            const notifications: NotificationEntry[] = []
 
             try {
-                for (const preparedPlan of preparedPlans) {
-                    const blockId = allocateBlockId(ctx.state)
-                    const keepResult = resolveKeepMarkers(
-                        preparedPlan.finalSummary,
-                        rawMessages,
-                        ctx.state,
-                        ctx.config,
-                    )
-                    preparedPlan.finalSummary = keepResult.summary
-                    const storedSummary = wrapCompressedSummary(blockId, preparedPlan.finalSummary)
-                    const summaryTokens = countTokens(storedSummary)
-
-                    const applied = applyCompressionState(
-                        ctx.state,
-                        {
-                            topic: preparedPlan.entry.topic ?? input.topic ?? "",
-                            batchTopic: input.topic,
-                            startId: preparedPlan.entry.startId,
-                            endId: preparedPlan.entry.endId,
-                            mode: "range",
-                            runId,
-                            compressMessageId: toolCtx.messageID,
-                            compressCallId: callId,
-                            summaryTokens,
-                        },
-                        preparedPlan.selection,
-                        preparedPlan.anchorMessageId,
-                        blockId,
-                        storedSummary,
-                        preparedPlan.consumedBlockIds,
-                        ctx.config.gc,
-                    )
-
-                    totalCompressedMessages += applied.messageIds.length
-
-                    notifications.push({
-                        blockId,
+                const applied = applyCompressionState(
+                    ctx.state,
+                    {
+                        topic: "Context checkpoint",
+                        batchTopic: undefined,
+                        startId: plan.droppedRefs[0],
+                        endId: plan.droppedRefs[plan.droppedRefs.length - 1],
+                        mode: "range",
                         runId,
-                        summary: preparedPlan.finalSummary,
+                        compressMessageId: toolCtx.messageID,
+                        compressCallId: callId,
                         summaryTokens,
-                    })
-                }
+                    },
+                    plan.selection,
+                    plan.anchorMessageId,
+                    blockId,
+                    storedSummary,
+                    plan.consumedBlockIds,
+                    ctx.config.gc,
+                )
 
-                await finalizeSession(ctx, toolCtx, rawMessages, notifications, input.topic)
+                ctx.state.nudges.pendingCompression = undefined
+                ctx.state.nudges.lastNudgeShownTokens = undefined
+                ctx.state.nudges.lastPerMessageNudgeTokens = getCurrentTokenUsage(
+                    ctx.state,
+                    rawMessages,
+                )
+                ctx.state.nudges.shouldInjectThisTurn = false
+                ctx.state.nudges.compressBaselineSet = true
+                notifications.push({ blockId, runId, summary, summaryTokens })
+                await finalizeSession(ctx, toolCtx, rawMessages, notifications, undefined)
+
+                const ref = formatBlockRef(blockId, outputTier)
+                return `Compressed ${plan.droppedRefs.length} block(s) into ${ref}; kept ${input.keep.length}. Continue the task using the retained blocks and checkpoint.`
             } catch (error) {
                 restoreCompressionState(ctx.state, snapshot)
-                ctx.state.qualityGateRetryPending = qualityGateRetryPendingBefore
                 throw error
             }
-
-            const skippedNote = phantomSkipNotice !== null ? `\n⚠️ ${phantomSkipNotice}\n` : ""
-            const ackNote = ignoredAcknowledgeRisk
-                ? `\n⚠️ acknowledgeRisk was ignored: no quality gate rejection was pending, so quality checks ran normally. Only pass it when retrying immediately after a quality gate rejection.\n`
-                : ""
-            return `Compressed ${totalCompressedMessages} messages into ${COMPRESSED_BLOCK_HEADER}.${skippedNote}${ackNote}\nIMPORTANT: This was an automatic context compression. You MUST continue your previous task exactly where you left off. Do NOT ask the user what to do next.\n💡 Tip: Use search_context('keyword') to find compressed content when you need it later.`
         },
     })
-}
-
-function extractBoundaryConsumedBlocks(
-    startReference: { kind: string; blockId?: number },
-    endReference: { kind: string; blockId?: number },
-): number[] {
-    const consumed: number[] = []
-    const seen = new Set<number>()
-    for (const ref of [startReference, endReference]) {
-        if (
-            ref.kind === "compressed-block" &&
-            ref.blockId !== undefined &&
-            !seen.has(ref.blockId)
-        ) {
-            seen.add(ref.blockId)
-            consumed.push(ref.blockId)
-        }
-    }
-    return consumed
 }

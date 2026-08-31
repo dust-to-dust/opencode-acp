@@ -5,27 +5,24 @@ import type { CompressionBlock, WithParts } from "../state/types"
 import type { SessionState } from "../state/types"
 import type { PluginConfig } from "../config"
 import type { Logger } from "../logger"
-import {
-    estimateContextComposition,
-    buildCompressibleRanges,
-    computeProtectedRefs,
-    formatCompressibleRanges,
-} from "../messages/inject/utils"
+import { estimateContextComposition, computeProtectedRefs } from "../messages/inject/utils"
+import { buildCompressionCandidates } from "../messages/inject/inject"
 import { fetchSessionMessages } from "./search"
 import { hideConsumedCompressCalls } from "./hide-consumed"
 import { estimateSystemPromptTokens } from "../token-utils"
+import { formatBlockRef } from "../message-ids"
 
-const ACP_STATUS_TOOL_DESCRIPTION = `Show context status — overview includes compressible ranges by default.
+const ACP_STATUS_TOOL_DESCRIPTION = `Show context status — overview includes eligible semantic activities by default.
 
-No args: Overview with totals, compressed blocks, and compressible ranges.
-scope:"uncompressed": Compressible ranges only (default view:"ranges"). Add view:"messages" for per-message listing with tool/sort filters.
-scope:"compressed": Drill into compressed blocks — list each with full details (age, generation, consumed lineage).
+No args: Overview with totals, checkpoints, and eligible activity IDs.
+scope:"uncompressed": Eligible activities only. Add view:"messages" for per-message listing with tool/sort filters.
+scope:"compressed": Drill into checkpoints — list each with full details (age, generation, consumed lineage).
 
 Use this tool to:
-- See what's consuming context + compressible ranges in one call (no args)
-- Focus on ranges only (scope:"uncompressed")
+- See what's consuming context and which semantic activities ACP can currently select
+- Focus on eligible activities only (scope:"uncompressed")
 - Find all messages of a specific tool type (scope:"uncompressed", view:"messages", tool:"bash")
-- Check block details before decompressing (scope:"compressed")`
+- Check checkpoint details before decompressing (scope:"compressed")`
 
 function formatTokens(n: number): string {
     if (!Number.isFinite(n) || n <= 0) return "0"
@@ -67,19 +64,26 @@ function tierLabel(block: CompressionBlock): string {
     return `T${tier}`
 }
 
+function checkpointRef(block: CompressionBlock): string {
+    return block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1)
+}
+
 function tierBreakdown(blocks: CompressionBlock[]): string | null {
     const tierTokens: Record<number, number> = {}
     for (const b of blocks) {
         const t = b.tier ?? 1
         tierTokens[t] = (tierTokens[t] || 0) + (b.summaryTokens || 0)
     }
-    const tiers = Object.keys(tierTokens)
-        .map(Number)
-    if (tiers.length <= 1 && (!tierTokens[2] || tierTokens[2] === 0) && (!tierTokens[3] || tierTokens[3] === 0)) {
+    const tiers = Object.keys(tierTokens).map(Number)
+    if (
+        tiers.length <= 1 &&
+        (!tierTokens[2] || tierTokens[2] === 0) &&
+        (!tierTokens[3] || tierTokens[3] === 0)
+    ) {
         return null
     }
     const parts: string[] = []
-    for (const t of [1, 2, 3]) {
+    for (const t of tiers.sort((a, b) => a - b)) {
         if (tierTokens[t]) {
             parts.push(`T${t}: ${formatTokens(tierTokens[t])}`)
         }
@@ -263,34 +267,14 @@ function renderOverview(
             const tier = tierLabel(b)
             const effTokens = getEffectiveCompressedTokens(b, blocksById)
             lines.push(
-                `  b${b.blockId} (${tier})  ${formatTokens(effTokens)}→${formatTokens(b.summaryTokens)}  ${ageStr}  ${range}  "${topic}"`,
+                `  ${checkpointRef(b)} (${tier})  ${formatTokens(effTokens)}→${formatTokens(b.summaryTokens)}  ${ageStr}  ${range}  "${topic}"`,
             )
         }
     }
 
     if (!fetchFailed) {
-        const pruneMap = ctx.state.prune.messages.byMessageId
-        const visibleRaw = rawMessages.filter((msg) => {
-            const msgId = (msg.info as any)?.id || ""
-            const entry = pruneMap.get(msgId)
-            return !entry || entry.activeBlockIds.length === 0
-        })
-        const protectedRefs = ctx.config?.compress
-            ? computeProtectedRefs(visibleRaw, ctx.state, ctx.config.compress)
-            : new Set<string>()
-        const contextRanges = buildCompressibleRanges(
-            visibleRaw,
-            ctx.state,
-            ctx.config?.compress?.protectedTools ?? [],
-            ctx.config?.protectedFilePatterns ?? [],
-            protectedRefs,
-        )
-        if (contextRanges.compressible.length > 0 || contextRanges.protected.length > 0) {
-            lines.push("")
-            lines.push(
-                formatCompressibleRanges(contextRanges.compressible, contextRanges.protected),
-            )
-        }
+        lines.push("")
+        lines.push(...renderEligibleActivities(rawMessages, ctx))
     }
 
     lines.push("")
@@ -303,40 +287,39 @@ function renderOverview(
     return lines
 }
 
-function renderUncompressedRanges(rawMessages: WithParts[], ctx: StatusRenderContext): string[] {
-    const pruneMap = ctx.state.prune.messages.byMessageId
-    const visibleMessages = rawMessages.filter((msg) => {
-        const msgId = (msg.info as any)?.id || ""
-        const entry = pruneMap.get(msgId)
-        return !entry || entry.activeBlockIds.length === 0
-    })
-
-    const protectedRefs = ctx.config?.compress
-        ? computeProtectedRefs(visibleMessages, ctx.state, ctx.config.compress)
-        : new Set<string>()
-    const contextRanges = buildCompressibleRanges(
-        visibleMessages,
+function renderEligibleActivities(rawMessages: WithParts[], ctx: StatusRenderContext): string[] {
+    if (!ctx.config?.compress) {
+        return ["ELIGIBLE ACTIVITIES — unavailable (compression config not loaded)"]
+    }
+    const pending = ctx.state.nudges.pendingCompression
+    const result = buildCompressionCandidates(
         ctx.state,
-        ctx.config?.compress?.protectedTools ?? [],
-        ctx.config?.protectedFilePatterns ?? [],
-        protectedRefs,
+        ctx.config,
+        rawMessages,
+        computeProtectedRefs(rawMessages, ctx.state, ctx.config.compress),
     )
-    const compressible = contextRanges.compressible
-    const totalTokens = compressible.reduce((s, r) => s + r.tokens, 0)
-    const totalMsgs = compressible.reduce((s, r) => s + r.count, 0)
-
-    const lines: string[] = []
-    lines.push(
-        `UNCOMPRESSED — ${formatTokens(totalTokens)} | ${totalMsgs} msgs in ${compressible.length} ranges`,
-    )
-    lines.push("")
-
-    if (compressible.length === 0 && contextRanges.protected.length === 0) {
-        lines.push("  (no compressible ranges)")
-    } else {
-        lines.push(formatCompressibleRanges(compressible, contextRanges.protected))
+    const refs = pending?.candidates ?? result.refs
+    const cacheBoundary = pending?.cacheBoundary ?? result.refs[result.refs.length - 1]
+    if (refs.length === 0) {
+        return [
+            "ELIGIBLE ACTIVITIES — none available",
+            "All visible activities are protected, recent, already checkpointed, or too small.",
+        ]
     }
 
+    return [
+        `ELIGIBLE ACTIVITIES — ${refs.length}${pending ? " pending selection" : " available"}`,
+        refs.join(", "),
+        `Cache boundary: ${cacheBoundary ?? refs[refs.length - 1]}`,
+        pending
+            ? "ACP has already requested a keep selection for these activities."
+            : "ACP will request a keep selection when the configured growth threshold is reached.",
+    ]
+}
+
+function renderUncompressedRanges(rawMessages: WithParts[], ctx: StatusRenderContext): string[] {
+    const lines: string[] = []
+    lines.push(...renderEligibleActivities(rawMessages, ctx))
     lines.push("")
     lines.push(`Per-message listing: acp_status({scope:"uncompressed", view:"messages"})`)
     lines.push(`Filter by tool: acp_status({scope:"uncompressed", view:"messages", tool:"bash"})`)
@@ -420,8 +403,7 @@ function renderCompressedDrilldown(
         sorted.sort(
             (a, b) =>
                 getEffectiveCompressedTokens(b, blocksById) -
-                    getEffectiveCompressedTokens(a, blocksById) ||
-                b.createdAt - a.createdAt,
+                    getEffectiveCompressedTokens(a, blocksById) || b.createdAt - a.createdAt,
         )
     }
 
@@ -455,14 +437,19 @@ function renderCompressedDrilldown(
         const effCount = b.effectiveMessageIds?.length ?? 0
         const consumed =
             b.includedBlockIds && b.includedBlockIds.length > 0
-                ? ` nested=[${b.includedBlockIds.map((n) => `b${n}`).join(",")}]`
+                ? ` nested=[${b.includedBlockIds
+                      .map((id) => {
+                          const nested = blocksById.get(id)
+                          return nested ? checkpointRef(nested) : String(id)
+                      })
+                      .join(",")}]`
                 : ""
         const status = b.active ? "" : " [inactive]"
         const topic = b.topic || "(no topic)"
         const tier = tierLabel(b)
         const effTokens = getEffectiveCompressedTokens(b, blocksById)
         lines.push(
-            `  b${b.blockId} (${tier})  ${formatTokens(effTokens)}→${formatTokens(b.summaryTokens)}  ${formatAge(b.createdAt)}  ${formatIdRange(b)}  age=${survived} ${gen} eff=${effCount}${consumed}${status}`,
+            `  ${checkpointRef(b)} (${tier})  ${formatTokens(effTokens)}→${formatTokens(b.summaryTokens)}  ${formatAge(b.createdAt)}  ${formatIdRange(b)}  age=${survived} ${gen} eff=${effCount}${consumed}${status}`,
         )
         lines.push(`    "${topic}"`)
     }
@@ -506,7 +493,7 @@ function buildVisibleWithSummaries(rawMessages: WithParts[], ctx: ToolContext): 
 
 export interface StatusReportOptions {
     scope?: "compressed" | "uncompressed"
-    view?: "ranges" | "messages"
+    view?: "activities" | "ranges" | "messages"
     tool?: string
     sort?: "size" | "time" | "tool" | "age"
     limit?: number
@@ -518,15 +505,13 @@ export function buildStatusReport(
     options?: StatusReportOptions,
 ): string {
     const scope = options?.scope
-    const view = options?.view ?? "ranges"
+    const view = options?.view ?? "activities"
     const toolFilter = options?.tool
     const sort = options?.sort ?? "size"
     const limit = options?.limit ?? 30
 
     const msgState = renderCtx.state.prune.messages
-    const allBlocks = Array.from(msgState.blocksById.values()).sort(
-        (a, b) => a.blockId - b.blockId,
-    )
+    const allBlocks = Array.from(msgState.blocksById.values()).sort((a, b) => a.blockId - b.blockId)
     const activeBlocks = allBlocks.filter((b) => b.active)
 
     const lines: string[] = []
@@ -578,7 +563,7 @@ export function createAcpStatusTool(factoryCtx: ToolFactoryContext): ReturnType<
                 .string()
                 .optional()
                 .describe(
-                    'Display format for scope:"uncompressed": "ranges" (default, grouped by turn — matches nudge format) or "messages" (per-message listing with sort/filter)',
+                    'Display format for scope:"uncompressed": "activities" (default) or "messages" (per-message listing with sort/filter)',
                 ),
             tool: tool.schema
                 .string()
@@ -598,7 +583,7 @@ export function createAcpStatusTool(factoryCtx: ToolFactoryContext): ReturnType<
                 args.scope === "compressed" || args.scope === "uncompressed"
                     ? args.scope
                     : undefined
-            const view = args.view === "messages" ? "messages" : "ranges"
+            const view = args.view === "messages" ? "messages" : "activities"
             const toolFilter = typeof args.tool === "string" ? args.tool : undefined
             const sort =
                 args.sort === "time" || args.sort === "tool" || args.sort === "age"
@@ -608,11 +593,11 @@ export function createAcpStatusTool(factoryCtx: ToolFactoryContext): ReturnType<
                 Number.isFinite(args.limit) && args.limit! > 0 ? Math.min(args.limit!, 200) : 30
 
             if (scope === "compressed") {
-                return buildStatusReport(
-                    { state: ctx.state, config: ctx.config },
-                    [],
-                    { scope: "compressed", sort, limit },
-                )
+                return buildStatusReport({ state: ctx.state, config: ctx.config }, [], {
+                    scope: "compressed",
+                    sort,
+                    limit,
+                })
             }
 
             let rawMessages: WithParts[] = []
@@ -625,11 +610,13 @@ export function createAcpStatusTool(factoryCtx: ToolFactoryContext): ReturnType<
 
             hideConsumedCompressCalls(ctx.state, rawMessages)
 
-            return buildStatusReport(
-                { state: ctx.state, config: ctx.config },
-                rawMessages,
-                { scope, view, tool: toolFilter, sort, limit },
-            )
+            return buildStatusReport({ state: ctx.state, config: ctx.config }, rawMessages, {
+                scope,
+                view,
+                tool: toolFilter,
+                sort,
+                limit,
+            })
         },
     })
 }

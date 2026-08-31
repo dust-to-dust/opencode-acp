@@ -112,7 +112,7 @@ function repeatedWord(word: string, count: number): string {
     return Array.from({ length: count }, () => word).join(" ")
 }
 
-test("injectMessageIds injects ID into every tool output for assistant messages", () => {
+test("injectMessageIds injects the activity ref into every assistant tool output", () => {
     const sessionID = "ses_message_priority_tags"
     const messages: WithParts[] = [
         {
@@ -193,23 +193,17 @@ test("injectMessageIds injects ID into every tool output for assistant messages"
     assert.equal(assistantToolOne?.type, "tool")
     assert.equal(assistantTextTwo?.type, "text")
     assert.equal(assistantToolTwo?.type, "tool")
-    // User messages: still injected into all text parts
-    assert.match(
-        (userTextOne as any).text,
-        /\n\n<dcp-message-id[^>]*>m00001<\/dcp-message-id>/,
-    )
-    assert.match(
-        (userTextTwo as any).text,
-        /\n\n<dcp-message-id[^>]*>m00001<\/dcp-message-id>/,
-    )
-    // Assistant messages: ID injected into every tool output
+    // User activities: the same stable ref is injected into all text parts.
+    assert.match((userTextOne as any).text, /\n\n<dcp-message-id[^>]*>A001<\/dcp-message-id>/)
+    assert.match((userTextTwo as any).text, /\n\n<dcp-message-id[^>]*>A001<\/dcp-message-id>/)
+    // Assistant activities: the activity ref is injected into every tool output.
     assert.doesNotMatch((assistantTextOne as any).text, /dcp-message-id/)
-    assert.match((assistantToolOne as any).state.output, /m00002<\/dcp-message-id>/)
+    assert.match((assistantToolOne as any).state.output, /A002<\/dcp-message-id>/)
     assert.doesNotMatch((assistantTextTwo as any).text, /dcp-message-id/)
-    assert.match((assistantToolTwo as any).state.output, /m00002<\/dcp-message-id>/)
+    assert.match((assistantToolTwo as any).state.output, /A002<\/dcp-message-id>/)
 })
 
-test("injectMessageIds injects ID into every tool output in range mode", () => {
+test("injectMessageIds keeps one activity ref across tool outputs in range mode", () => {
     const sessionID = "ses_range_message_id_tags"
     const messages: WithParts[] = [
         buildMessage("msg-user-1", "user", sessionID, repeatedWord("investigate", 6000), 1),
@@ -246,13 +240,12 @@ test("injectMessageIds injects ID into every tool output in range mode", () => {
     const assistantTextTwo = messages[1]?.parts[2]
     const assistantToolTwo = messages[1]?.parts[3]
 
-    // Every tool output gets the ID
+    // Every tool output gets the activity ref.
     assert.doesNotMatch((assistantTextOne as any).text, /dcp-message-id/)
-    assert.match((assistantToolOne as any).state.output, /m00002<\/dcp-message-id>/)
+    assert.match((assistantToolOne as any).state.output, /A002<\/dcp-message-id>/)
     assert.doesNotMatch((assistantTextTwo as any).text, /dcp-message-id/)
-    assert.match((assistantToolTwo as any).state.output, /m00002<\/dcp-message-id>/)
+    assert.match((assistantToolTwo as any).state.output, /A002<\/dcp-message-id>/)
 })
-
 
 test("range-mode nudges append to existing text parts before tool outputs", () => {
     const sessionID = "ses_range_nudge_injection"
@@ -456,8 +449,8 @@ test("range-mode nudges skip assistant messages with only empty text parts (issu
 test("hallucination stripping removes all dcp-prefixed XML tags including variants", async () => {
     const text =
         "alpha" +
-        '<dcp-message-id priority="low">m00008</dcp-message-id>' +
-        '<dcp-message-id-extra priority="high">m00008</dcp-message-id-extra>' +
+        '<dcp-message-id priority="low">A008</dcp-message-id>' +
+        '<dcp-message-id-extra priority="high">B008</dcp-message-id-extra>' +
         "<dcp-system-reminder>strip this</dcp-system-reminder>" +
         "<dcp-system-reminder-extra>strip this too</dcp-system-reminder-extra>" +
         "omega"
@@ -472,8 +465,14 @@ test("hallucination stripping removes all dcp-prefixed XML tags including varian
 
 test("hallucination stripping removes colon and underscore dcp tag variants", async () => {
     // The regex matches <dcp...> with any suffix (colon, underscore, etc.)
-    assert.equal(stripHallucinationsFromString('before<dcp:block>content</dcp:block>after'), "beforeafter")
-    assert.equal(stripHallucinationsFromString('start<dcp_summary>text</dcp_summary>end'), "startend")
+    assert.equal(
+        stripHallucinationsFromString("before<dcp:block>content</dcp:block>after"),
+        "beforeafter",
+    )
+    assert.equal(
+        stripHallucinationsFromString("start<dcp_summary>text</dcp_summary>end"),
+        "startend",
+    )
 })
 
 test("hallucination stripping removes orphan opening tags", async () => {
@@ -501,7 +500,7 @@ test("hallucination stripping handles nested dcp tags", async () => {
 test("hallucination stripping handles mixed paired and orphan tags", async () => {
     assert.equal(
         stripHallucinationsFromString(
-            'text\n<dcp-message-id priority="low">m00045</dcp-message-id>\n<dcp:function_calls>\n',
+            'text\n<dcp-message-id priority="low">A045</dcp-message-id>\n<dcp:function_calls>\n',
         ),
         "text\n\n\n",
     )

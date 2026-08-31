@@ -51,7 +51,7 @@ const server: Plugin = (async (ctx) => {
         secureMode: isSecureMode(),
     })
     const registry = new SessionStateRegistry(logger)
-    const prompts = new PromptStore(logger)
+    const prompts = new PromptStore(logger, ctx.directory, config.experimental.customPrompts)
     const hostPermissions: HostPermissionSnapshot = {
         global: undefined,
         agents: {},

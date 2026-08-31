@@ -24,7 +24,6 @@ import {
 } from "./compress/timing"
 import { filterMessages, filterMessagesInPlace } from "./messages/shape"
 import { getLastUserMessage } from "./messages/query"
-import { truncateLargeToolOutputs } from "./messages/truncate-tools"
 import { handleContextCommand, handleStatsCommand } from "./commands"
 import { handleExportCommand } from "./commands/export"
 import { sendIgnoredMessage } from "./ui/notification"
@@ -42,7 +41,6 @@ import {
     type SessionStateRegistry,
 } from "./state"
 import { cacheSystemPromptTokens } from "./ui/utils"
-import { runBatchCleanup } from "./gc/merge"
 import { getCurrentTokenUsage } from "./token-utils"
 
 const INTERNAL_AGENT_SIGNATURES = [
@@ -255,13 +253,8 @@ export function createChatMessageTransformHandler(
         }
         syncToolCache(state, config, logger, output.messages)
         buildToolIdList(state, output.messages)
-        const batchResult = runBatchCleanup(state, config, logger, output.messages)
-        if (batchResult.mergedCount > 0) {
-            saveSessionState(state, logger).catch(() => {})
-        }
         const prePruneTokens = getCurrentTokenUsage(state, output.messages)
         prune(state, logger, config, output.messages)
-        truncateLargeToolOutputs(state, config, logger, output.messages)
         hideConsumedCompressCalls(state, output.messages)
         assignMessageRefs(state, output.messages)
         const compressionPriorities = buildPriorityMap(config, state, output.messages)

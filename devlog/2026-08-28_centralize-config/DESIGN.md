@@ -14,8 +14,9 @@ TypeScript owns parsing, validation, layered overrides, dynamic interpolation, a
 1. Parse and validate the bundled default object.
 2. Clone it so callers cannot mutate shared defaults.
 3. Apply the global ACP configuration when present.
-4. Apply the nearest project ACP configuration when present.
-5. Preserve mandatory protected tools after each merge.
+4. Apply the `$OPENCODE_CONFIG_DIR` ACP configuration when present.
+5. Apply the nearest project ACP configuration when present.
+6. Preserve mandatory protected tools after each merge.
 
 Malformed optional override files retain the existing warning-and-skip behavior. A malformed or missing bundled default is fatal because the package is incomplete.
 
@@ -23,7 +24,7 @@ Malformed optional override files retain the existing warning-and-skip behavior.
 
 1. Load every bundled prompt asset from `config/prompts/`.
 2. When custom prompts are disabled, use those bundled values directly.
-3. When enabled, apply global prompt overrides and then project prompt overrides.
+3. When enabled, resolve project, `$OPENCODE_CONFIG_DIR`, then global prompt overrides.
 4. Keep runtime data interpolation and extension composition in TypeScript.
 
 ## Packaging
@@ -32,4 +33,4 @@ Malformed optional override files retain the existing warning-and-skip behavior.
 
 ## Compatibility
 
-This refactor changes the storage location of built-in defaults, not the user-facing configuration model. Global/project layering and `experimental.customPrompts` remain supported.
+This refactor changes the storage location of built-in defaults, not the user-facing configuration model. Global/config-dir/project layering and `experimental.customPrompts` remain supported.

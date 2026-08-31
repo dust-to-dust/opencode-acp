@@ -18,7 +18,12 @@ import test, { beforeEach } from "node:test"
 import type { PluginConfig } from "../lib/config"
 import { createChatMessageTransformHandler } from "../lib/hooks"
 import { Logger } from "../lib/logger"
-import { createSessionState, saveSessionState, type WithParts, type SessionState } from "../lib/state"
+import {
+    createSessionState,
+    saveSessionState,
+    type WithParts,
+    type SessionState,
+} from "../lib/state"
 import { isSyntheticMessage } from "../lib/messages/query"
 import { mkdtempSync, rmSync } from "node:fs"
 import { join } from "node:path"
@@ -137,6 +142,16 @@ function makeToolPart(
     }
 }
 
+function makeCompressCarrier(id: string, callID: string, fact: string): WithParts {
+    const part = makeToolPart(callID, "compress", "completed", "Checkpoint created", {
+        keep: [],
+        confirmedFacts: [fact],
+        nextSteps: [],
+    })
+    part.messageID = id
+    return makeAssistantMessage(id, "", [part])
+}
+
 function createMockClient() {
     return {
         session: {
@@ -215,15 +230,15 @@ test("basic pipeline: assigns message IDs and preserves all messages", async () 
     assert.equal(output.messages.length, 5)
 
     // Message IDs should be assigned (suffix message excluded from ref assignment)
-    assert.equal(state.messageIds.byRawId.get("u1"), "m00001")
-    assert.equal(state.messageIds.byRawId.get("a1"), "m00002")
-    assert.equal(state.messageIds.byRawId.get("u2"), "m00003")
-    assert.equal(state.messageIds.byRawId.get("a2"), "m00004")
-    assert.equal(state.messageIds.byRawId.get("u3"), "m00005")
+    assert.equal(state.messageIds.byRawId.get("u1"), "A001")
+    assert.equal(state.messageIds.byRawId.get("a1"), "A002")
+    assert.equal(state.messageIds.byRawId.get("u2"), "A003")
+    assert.equal(state.messageIds.byRawId.get("a2"), "A004")
+    assert.equal(state.messageIds.byRawId.get("u3"), "A005")
 
     // Reverse mapping should exist
-    assert.equal(state.messageIds.byRef.get("m00001"), "u1")
-    assert.equal(state.messageIds.byRef.get("m00005"), "u3")
+    assert.equal(state.messageIds.byRef.get("A001"), "u1")
+    assert.equal(state.messageIds.byRef.get("A005"), "u3")
 })
 
 // ─── Test: Message IDs are stable across multiple pipeline runs ──────────────
@@ -233,15 +248,12 @@ test("message IDs remain stable across sequential pipeline calls", async () => {
 
     // First call with 2 messages
     const output1 = {
-        messages: [
-            makeUserMessage("u1", "Hello"),
-            makeAssistantMessage("a1", "Hi"),
-        ],
+        messages: [makeUserMessage("u1", "Hello"), makeAssistantMessage("a1", "Hi")],
     }
     await handler({}, output1)
 
-    assert.equal(state.messageIds.byRawId.get("u1"), "m00001")
-    assert.equal(state.messageIds.byRawId.get("a1"), "m00002")
+    assert.equal(state.messageIds.byRawId.get("u1"), "A001")
+    assert.equal(state.messageIds.byRawId.get("a1"), "A002")
     assert.equal(state.messageIds.nextRef, 3)
 
     // Second call adds new messages; existing IDs should remain stable
@@ -256,11 +268,11 @@ test("message IDs remain stable across sequential pipeline calls", async () => {
     await handler({}, output2)
 
     // Old IDs stable
-    assert.equal(state.messageIds.byRawId.get("u1"), "m00001")
-    assert.equal(state.messageIds.byRawId.get("a1"), "m00002")
+    assert.equal(state.messageIds.byRawId.get("u1"), "A001")
+    assert.equal(state.messageIds.byRawId.get("a1"), "A002")
     // New IDs assigned
-    assert.equal(state.messageIds.byRawId.get("u2"), "m00003")
-    assert.equal(state.messageIds.byRawId.get("a2"), "m00004")
+    assert.equal(state.messageIds.byRawId.get("u2"), "A003")
+    assert.equal(state.messageIds.byRawId.get("a2"), "A004")
     assert.equal(state.messageIds.nextRef, 5)
 })
 
@@ -271,7 +283,7 @@ test("filterMessagesInPlace: removes messages without valid info", async () => {
 
     const output = {
         messages: [
-            { role: "user", parts: [{ type: "text", text: "no info" }] },  // no .info → filtered
+            { role: "user", parts: [{ type: "text", text: "no info" }] }, // no .info → filtered
             makeUserMessage("u1", "Valid"),
             makeAssistantMessage("a1", "Response"),
         ] as WithParts[],
@@ -324,9 +336,9 @@ test("compression blocks: compressed messages are replaced with summaries", asyn
         mode: "message",
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "m00001",
-        endId: "m00002",
-        anchorMessageId: "u2",  // summary injected at this anchor
+        startId: "A001",
+        endId: "A002",
+        anchorMessageId: "u2", // summary injected at this anchor
         compressMessageId: "msg-compress",
         compressCallId: "call-compress",
         includedBlockIds: [],
@@ -360,6 +372,11 @@ test("compression blocks: compressed messages are replaced with summaries", asyn
         messages: [
             makeUserMessage("u1", "Hello"),
             makeAssistantMessage("a1", "Hi there"),
+            makeCompressCarrier(
+                "msg-compress",
+                "call-compress",
+                "Previous conversation about greetings",
+            ),
             makeUserMessage("u2", "How are you?"),
             makeAssistantMessage("a2", "I'm fine"),
         ],
@@ -369,17 +386,17 @@ test("compression blocks: compressed messages are replaced with summaries", asyn
 
     const remainingIds = output.messages.map((m: any) => m.info.id)
 
-    assert.ok(remainingIds.includes("u1"), "u1 (first user) is force-preserved even when compressed")
+    assert.ok(
+        remainingIds.includes("u1"),
+        "u1 (first user) is force-preserved even when compressed",
+    )
     assert.ok(!remainingIds.includes("a1"), "a1 should be pruned")
 
     assert.ok(remainingIds.includes("u2"), "u2 should survive")
     assert.ok(remainingIds.includes("a2"), "a2 should survive")
 
-    const hasRecap = output.messages.some(
-        (m: any) =>
-            m.parts.some(
-                (p: any) => p.type === "tool" && p.tool === "acp_context_recap",
-            ),
+    const hasRecap = output.messages.some((m: any) =>
+        m.parts.some((p: any) => p.type === "tool" && p.tool === "acp_context_recap"),
     )
     assert.ok(!hasRecap, "no synthetic recap should be injected (compress-as-anchor)")
 
@@ -393,10 +410,7 @@ test("compression blocks: compressed messages are replaced with summaries", asyn
         !u2Text.includes("Previous conversation about greetings"),
         "summary should NOT be merged into u2 text",
     )
-    assert.ok(
-        u2Text.includes("How are you?"),
-        "u2's original text should be preserved unchanged",
-    )
+    assert.ok(u2Text.includes("How are you?"), "u2's original text should be preserved unchanged")
 })
 
 // ─── Test: Regression — no consecutive user messages after compression ──────
@@ -416,8 +430,8 @@ test("compression summary: never produces two consecutive user turns (Bug 36)", 
         mode: "message",
         topic: "early work",
         batchTopic: "early work",
-        startId: "m00001",
-        endId: "m00002",
+        startId: "A001",
+        endId: "A002",
         anchorMessageId: "u1",
         compressMessageId: "msg-compress",
         compressCallId: "call-compress",
@@ -489,14 +503,14 @@ test("compression summary: never produces two consecutive user turns (Bug 36)", 
         .filter((p) => p.type === "text")
         .map((p) => (p as any).text)
         .join("")
-    assert.ok(!u2Text.includes("The assistant explained the plan"), "summary should NOT be merged into u2")
+    assert.ok(
+        !u2Text.includes("The assistant explained the plan"),
+        "summary should NOT be merged into u2",
+    )
     assert.ok(u2Text.includes("Sounds good, continue."), "u2 original text preserved")
 
-    const hasRecap = historical.some(
-        (m: any) =>
-            m.parts.some(
-                (p: any) => p.type === "tool" && p.tool === "acp_context_recap",
-            ),
+    const hasRecap = historical.some((m: any) =>
+        m.parts.some((p: any) => p.type === "tool" && p.tool === "acp_context_recap"),
     )
     assert.ok(!hasRecap, "no synthetic recap should be injected (compress-as-anchor)")
 })
@@ -518,8 +532,8 @@ test("compression summary: emits standalone summary when range is last (no user 
         mode: "message",
         topic: "closing work",
         batchTopic: "closing work",
-        startId: "m00003",
-        endId: "m00004",
+        startId: "A003",
+        endId: "A004",
         anchorMessageId: "u2",
         compressMessageId: "msg-compress",
         compressCallId: "call-compress",
@@ -554,6 +568,7 @@ test("compression summary: emits standalone summary when range is last (no user 
             makeAssistantMessage("a1", "Working"),
             makeUserMessage("u2", "Almost done"),
             makeAssistantMessage("a2", "Finished"),
+            makeCompressCarrier("msg-compress", "call-compress", "Final wrap-up of the task."),
         ],
     }
 
@@ -563,11 +578,8 @@ test("compression summary: emits standalone summary when range is last (no user 
     assert.ok(!remainingIds.includes("u2"), "u2 (covered by block) should be pruned")
     assert.ok(!remainingIds.includes("a2"), "a2 (covered by block) should be pruned")
 
-    const hasRecap = output.messages.some(
-        (m: any) =>
-            m.parts.some(
-                (p: any) => p.type === "tool" && p.tool === "acp_context_recap",
-            ),
+    const hasRecap = output.messages.some((m: any) =>
+        m.parts.some((p: any) => p.type === "tool" && p.tool === "acp_context_recap"),
     )
     assert.ok(!hasRecap, "no synthetic recap should be injected (compress-as-anchor)")
 
@@ -602,8 +614,8 @@ test("message IDs remain consistent after compression and pruning", async () => 
         mode: "message",
         topic: "early chat",
         batchTopic: "early chat",
-        startId: "m00001",
-        endId: "m00002",
+        startId: "A001",
+        endId: "A002",
         anchorMessageId: "u3",
         compressMessageId: "msg-comp",
         compressCallId: "call-comp",
@@ -622,16 +634,21 @@ test("message IDs remain consistent after compression and pruning", async () => 
     state.prune.messages.activeBlockIds.add(blockId)
     state.prune.messages.activeByAnchorMessageId.set("u3", blockId)
     state.prune.messages.byMessageId.set("u1", {
-        tokenCount: 200, allBlockIds: [blockId], activeBlockIds: [blockId],
+        tokenCount: 200,
+        allBlockIds: [blockId],
+        activeBlockIds: [blockId],
     })
     state.prune.messages.byMessageId.set("a1", {
-        tokenCount: 300, allBlockIds: [blockId], activeBlockIds: [blockId],
+        tokenCount: 300,
+        allBlockIds: [blockId],
+        activeBlockIds: [blockId],
     })
 
     const output = {
         messages: [
             makeUserMessage("u1", "Hello"),
             makeAssistantMessage("a1", "Hi"),
+            makeCompressCarrier("msg-comp", "call-comp", "Summary of early messages"),
             makeUserMessage("u2", "How are you?"),
             makeAssistantMessage("a2", "Good"),
             makeUserMessage("u3", "What's up?"),
@@ -721,10 +738,10 @@ test("deny permission: still filters messages and strips hallucinations", async 
 test("state persistence: session state survives save/load round-trip", async () => {
     const { state, tempDir } = setupPipeline()
 
-    state.messageIds.byRawId.set("u1", "m00001")
-    state.messageIds.byRawId.set("a1", "m00002")
-    state.messageIds.byRef.set("m00001", "u1")
-    state.messageIds.byRef.set("m00002", "a1")
+    state.messageIds.byRawId.set("u1", "A001")
+    state.messageIds.byRawId.set("a1", "A002")
+    state.messageIds.byRef.set("A001", "u1")
+    state.messageIds.byRef.set("A002", "a1")
     state.messageIds.nextRef = 3
     state.stats.totalPruneTokens = 5000
 
@@ -735,8 +752,8 @@ test("state persistence: session state survives save/load round-trip", async () 
     const loaded = await loadSessionState(SID, logger)
 
     assert.ok(loaded, "state file should be loadable")
-    assert.equal(loaded!.messageIds?.byRawId?.["u1"], "m00001")
-    assert.equal(loaded!.messageIds?.byRawId?.["a1"], "m00002")
+    assert.equal(loaded!.messageIds?.byRawId?.["u1"], "A001")
+    assert.equal(loaded!.messageIds?.byRawId?.["a1"], "A002")
     assert.equal(loaded!.messageIds?.nextRef, 3)
     assert.equal(loaded!.stats.totalPruneTokens, 5000)
 
@@ -796,12 +813,15 @@ test("summary and compaction agent requests are skipped", async () => {
     const { state, handler } = setupPipeline()
 
     // Seed normal conversation state
-    await handler({}, {
-        messages: [
-            makeUserMessage("seed-u1", "Hello", SID, "build"),
-            makeAssistantMessage("seed-a1", "Hi"),
-        ],
-    })
+    await handler(
+        {},
+        {
+            messages: [
+                makeUserMessage("seed-u1", "Hello", SID, "build"),
+                makeAssistantMessage("seed-a1", "Hi"),
+            ],
+        },
+    )
 
     const nextRefBefore = state.messageIds.nextRef
 
@@ -849,8 +869,5 @@ test("normal agent request (build) is still fully processed", async () => {
     assert.ok(state.messageIds.byRawId.has("u1"), "build: u1 should get a ref")
     assert.ok(state.messageIds.byRawId.has("a1"), "build: a1 should get a ref")
     assert.ok(state.messageIds.nextRef >= 3, "build: nextRef should advance")
-    assert.ok(
-        messages.length >= 2,
-        "build: messages should be processed (suffix may be appended)",
-    )
+    assert.ok(messages.length >= 2, "build: messages should be processed (suffix may be appended)")
 })

@@ -25,10 +25,10 @@ Task-specific references (read only when relevant):
 
 ## 2. Non-Negotiable Runtime Invariants
 
-- Preserve the message-transform pipeline order unless the dependency between every affected step is understood and tested. The broad order is: resolve session state, update turn state, clean stale references, assign message references, sync blocks, run GC, prune, inject nudges, inject IDs, apply anchored nudges, then strip stale metadata.
+- Preserve the message-transform pipeline order unless the dependency between every affected step is understood and tested. The broad order is: resolve session state, update turn state, clean stale references, assign activity references, sync checkpoints, run GC, prune, inject semantic compression nudges, inject IDs, then strip stale metadata.
 - Session state is per session and includes compression blocks, nudge state, token statistics, raw-ID/reference mappings, timing, and tool-parameter caches. Persistence and state mutations must not lose existing data.
-- Protected tools, protected file patterns, protected user messages, and other configured protected content must not be accidentally pruned. Protected tool messages must be hard-excluded from compression ranges, not merely appended to summaries.
-- Preserve tool-use/tool-result pairing and the first-user-message invariant when changing message filtering or range selection.
+- Protected tools, protected file patterns, protected user messages, and other configured protected content must not be accidentally pruned. Protected tool messages must be hard-excluded from semantic candidate sets, not merely mentioned in checkpoint summaries.
+- Preserve tool-use/tool-result pairing and the first-user-message invariant when changing message filtering or semantic candidate selection.
 - Internal DCP-compatible names are persisted or shown to models. Do not rename `dcp-message-id`, `dcp-system-reminder`, `DCP_*` compatibility identifiers, or `dcp.schema.json` without a migration plan. User-visible naming remains ACP/acp.
     
 ## 3. Coding and Verification Rules

@@ -5,7 +5,7 @@ import type { CompressionBlock } from "../state/types"
 import type { SessionState, WithParts } from "../state"
 import { ensureSessionInitialized } from "../state"
 import { saveSessionState } from "../state/persistence"
-import { assignMessageRefs } from "../message-ids"
+import { assignMessageRefs, formatBlockRef, parseBlockGeneration } from "../message-ids"
 import { syncCompressionBlocks } from "../messages"
 import { getCurrentTokenUsage } from "../token-utils"
 import {
@@ -37,6 +37,10 @@ interface RunContext {
     }): Promise<void>
     metadata(input: { title: string }): void
     sessionID: string
+}
+
+function checkpointRef(block: CompressionBlock): string {
+    return block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1)
 }
 
 async function prepareDecompressSession(
@@ -72,9 +76,7 @@ async function finalizeDecompressSession(ctx: ToolContext): Promise<void> {
     await saveSessionState(ctx.state, ctx.logger)
 }
 
-type ResolveResult =
-    | { ok: true; targets: CompressionTarget[] }
-    | { ok: false; error: string }
+type ResolveResult = { ok: true; targets: CompressionTarget[] } | { ok: false; error: string }
 
 function resolveTargets(
     args: Record<string, unknown>,
@@ -93,7 +95,13 @@ function resolveTargets(
         return resolveSingleBlockTarget(messagesState, args.blockId as string)
     }
 
-    return resolveRangeTarget(state, rawMessages, args.startId as string, args.endId as string, logger)
+    return resolveRangeTarget(
+        state,
+        rawMessages,
+        args.startId as string,
+        args.endId as string,
+        logger,
+    )
 }
 
 function resolveSingleBlockTarget(
@@ -104,7 +112,7 @@ function resolveSingleBlockTarget(
     if (targetBlockId === null) {
         return {
             ok: false,
-            error: `Error: Invalid block ID "${blockIdArg}". Use format "b0", "b1", etc.`,
+            error: `Error: Invalid checkpoint ID "${blockIdArg}". Use a visible ID such as B001 or C004.`,
         }
     }
 
@@ -112,7 +120,18 @@ function resolveSingleBlockTarget(
     if (!target) {
         return {
             ok: false,
-            error: `Error: Block ${targetBlockId} does not exist. No compression found with that ID.`,
+            error: `Error: Checkpoint ${blockIdArg} does not exist.`,
+        }
+    }
+    if (
+        parseBlockGeneration(blockIdArg) !== null &&
+        !target.blocks.some(
+            (block) => checkpointRef(block).toUpperCase() === blockIdArg.trim().toUpperCase(),
+        )
+    ) {
+        return {
+            ok: false,
+            error: `Error: Checkpoint ${blockIdArg} does not exist.`,
         }
     }
 
@@ -124,7 +143,7 @@ function resolveSingleBlockTarget(
         if (activeAncestorBlockId !== null) {
             return {
                 ok: false,
-                error: `Error: Block ${target.displayId} is nested inside active block ${activeAncestorBlockId}. Decompress block ${activeAncestorBlockId} first.`,
+                error: `Error: Checkpoint ${checkpointRef(target.blocks[0])} is nested inside active checkpoint ${checkpointRef(messagesState.blocksById.get(activeAncestorBlockId)!)}. Decompress the active checkpoint first.`,
             }
         }
     }
@@ -199,13 +218,13 @@ The tool returns a condensed preview of the restored content so you can reason a
 
 TWO MODES:
 
-1. Block mode (default): decompress a single block by ID.
-   - blockId: block reference to decompress (e.g., "b0", "b2")
+1. Block mode (default): decompress a single checkpoint by ID.
+   - blockId: checkpoint reference to decompress (e.g., "B001", "C004")
 
 2. Range mode: decompress ALL blocks overlapping a message range. Use this to restore
    content across multiple blocks without calling acp_status + decompress repeatedly.
-   - startId: starting message or block ref (e.g., "m00150")
-   - endId: ending message or block ref (e.g., "m00200")
+   - startId: starting activity or checkpoint ref (e.g., "A150")
+   - endId: ending activity or checkpoint ref (e.g., "B004")
 
    Range mode finds every active block whose effectiveMessageIds touch the range and
    batch-restores them. Partial overlap decompresses the whole block (content cannot be
@@ -232,23 +251,33 @@ function buildSchema() {
         blockId: tool.schema
             .string()
             .optional()
-            .describe('Block reference to decompress (e.g., "b0", "b2"). Mutually exclusive with startId/endId.'),
+            .describe(
+                'Checkpoint reference to decompress (e.g., "B001", "C004"). Mutually exclusive with startId/endId.',
+            ),
         startId: tool.schema
             .string()
             .optional()
-            .describe('Range start: message ref (e.g., "m00150") or block ref (e.g., "b2"). Used with endId.'),
+            .describe(
+                'Range start: activity ref (e.g., "A150") or checkpoint ref (e.g., "B002"). Used with endId.',
+            ),
         endId: tool.schema
             .string()
             .optional()
-            .describe('Range end: message ref (e.g., "m00200") or block ref (e.g., "b5"). Used with startId.'),
+            .describe(
+                'Range end: activity ref (e.g., "A200") or checkpoint ref (e.g., "C005"). Used with startId.',
+            ),
         toFile: tool.schema
             .string()
             .optional()
-            .describe("If provided, writes restored content to this file path instead of inflating context. Block stays compressed. Path must be under /tmp or ~/.cache/opencode/. Example: '/tmp/block52.txt'"),
+            .describe(
+                "If provided, writes restored content to this file path instead of inflating context. Block stays compressed. Path must be under /tmp or ~/.cache/opencode/. Example: '/tmp/block52.txt'",
+            ),
         full: tool.schema
             .boolean()
             .optional()
-            .describe("If true, restores ALL content down to original messages (multi-level decompress). Default: false — restores one tier up (e.g., decompressing a T2 block restores T1 summaries, not raw messages). Use full:true only when you need the exact original content and have context budget for it."),
+            .describe(
+                "If true, restores ALL content down to original messages (multi-level decompress). Default: false — restores one tier up (e.g., decompressing a T2 block restores T1 summaries, not raw messages). Use full:true only when you need the exact original content and have context budget for it.",
+            ),
     }
 }
 
@@ -278,13 +307,17 @@ export function createDecompressTool(factoryCtx: ToolFactoryContext): ReturnType
 
             const contextUsageBefore = ctx.state.modelContextLimit
                 ? Math.round(
-                      (getCurrentTokenUsage(ctx.state, rawMessages) /
-                          ctx.state.modelContextLimit) *
+                      (getCurrentTokenUsage(ctx.state, rawMessages) / ctx.state.modelContextLimit) *
                           100,
                   )
                 : undefined
 
-            const resolved = resolveTargets(args as Record<string, unknown>, ctx.state, rawMessages, ctx.logger)
+            const resolved = resolveTargets(
+                args as Record<string, unknown>,
+                ctx.state,
+                rawMessages,
+                ctx.logger,
+            )
             if (!resolved.ok) {
                 return resolved.error
             }
@@ -332,7 +365,9 @@ export function createDecompressTool(factoryCtx: ToolFactoryContext): ReturnType
                         : (targets[0]?.blocks[0]?.summary ?? "(no content available)")
                 await writeFile(targetPath, fileContent, "utf-8")
 
-                const displayIds = targets.map((t) => `b${t.displayId}`).join(", ")
+                const displayIds = targets
+                    .map((target) => checkpointRef(target.blocks[0]))
+                    .join(", ")
                 return `Block(s) ${displayIds} content (${blockMessages.length} messages, ${fileContent.length} chars) written to ${targetPath}. Block(s) stay compressed — context unchanged. Use read tool to access specific parts.`
             }
 
@@ -361,8 +396,7 @@ export function createDecompressTool(factoryCtx: ToolFactoryContext): ReturnType
 
             const contextUsageAfter = ctx.state.modelContextLimit
                 ? Math.round(
-                      (getCurrentTokenUsage(ctx.state, rawMessages) /
-                          ctx.state.modelContextLimit) *
+                      (getCurrentTokenUsage(ctx.state, rawMessages) / ctx.state.modelContextLimit) *
                           100,
                   )
                 : undefined
@@ -375,7 +409,7 @@ export function createDecompressTool(factoryCtx: ToolFactoryContext): ReturnType
                 messagesState,
             )
 
-            const displayIds = targets.map((t) => `b${t.displayId}`).join(", ")
+            const displayIds = targets.map((target) => checkpointRef(target.blocks[0])).join(", ")
             const lines: string[] = []
             const headerNoun = targets.length === 1 ? "block" : "blocks"
             lines.push(
@@ -387,7 +421,11 @@ export function createDecompressTool(factoryCtx: ToolFactoryContext): ReturnType
             }
 
             if (reactivatedBlockIds.length > 0) {
-                const refs = reactivatedBlockIds.map((id) => `b${id}`).join(", ")
+                const refs = reactivatedBlockIds
+                    .map((id) => messagesState.blocksById.get(id))
+                    .filter((block): block is CompressionBlock => block !== undefined)
+                    .map(checkpointRef)
+                    .join(", ")
                 lines.push(`Also restored nested block(s): ${refs}.`)
             }
 
