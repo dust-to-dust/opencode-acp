@@ -8,13 +8,14 @@ import { createCompressRangeTool } from "../lib/compress/range"
 import { Logger } from "../lib/logger"
 import { assignMessageRefs } from "../lib/message-ids"
 import { injectCompressNudges } from "../lib/messages/inject/inject"
-import type { RuntimePrompts } from "../lib/prompts/store"
+import { PromptStore } from "../lib/prompts/store"
 import { createSessionState, type WithParts } from "../lib/state"
 import { singletonRegistry } from "./registry-stub"
 
 const dataHome = join(tmpdir(), `opencode-acp-selection-tests-${process.pid}`)
 process.env.XDG_DATA_HOME = dataHome
 mkdirSync(dataHome, { recursive: true })
+const runtimePrompts = new PromptStore(new Logger(false)).getRuntimePrompts()
 
 function config(): PluginConfig {
     return {
@@ -403,7 +404,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     assignMessageRefs(state, messages)
 
     const firstTurn = structuredClone(messages)
-    injectCompressNudges(state, pluginConfig, new Logger(false), firstTurn, {} as RuntimePrompts)
+    injectCompressNudges(state, pluginConfig, new Logger(false), firstTurn, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, false)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
 
@@ -412,7 +413,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     )
     assignMessageRefs(state, messages)
     const growthTurn = structuredClone(messages)
-    injectCompressNudges(state, pluginConfig, new Logger(false), growthTurn, {} as RuntimePrompts)
+    injectCompressNudges(state, pluginConfig, new Logger(false), growthTurn, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
@@ -468,7 +469,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     )
     assignMessageRefs(state, messages)
     const belowGrowth = structuredClone(messages)
-    injectCompressNudges(state, pluginConfig, new Logger(false), belowGrowth, {} as RuntimePrompts)
+    injectCompressNudges(state, pluginConfig, new Logger(false), belowGrowth, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, false)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 103_000)
     assert.equal(state.nudges.pendingCompression, undefined)
@@ -485,7 +486,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     )
     assignMessageRefs(state, messages)
     const secondGrowth = structuredClone(messages)
-    injectCompressNudges(state, pluginConfig, new Logger(false), secondGrowth, {} as RuntimePrompts)
+    injectCompressNudges(state, pluginConfig, new Logger(false), secondGrowth, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 103_000)
     assert.ok(state.nudges.pendingCompression?.candidates.includes("B001"))

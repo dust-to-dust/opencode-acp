@@ -1,4 +1,3 @@
-export const SYSTEM = `
 ACP manages conversation context as immutable activity blocks and checkpoints.
 
 BLOCKS
@@ -34,4 +33,3 @@ CHECKPOINT CONTENT
 DECOMPRESSION
 
 Use decompress when an active checkpoint lacks exact details needed for the task. Use the checkpoint ID shown in context, such as B001 or C004.
-`

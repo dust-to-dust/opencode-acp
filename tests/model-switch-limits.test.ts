@@ -141,13 +141,15 @@ function createMockPrompts() {
             return {
                 system: "ACP system",
                 compressRange: "compress range",
-                compressMessage: "compress message",
                 contextLimitNudge: "nudge",
                 turnNudge: "turn nudge",
                 iterationNudge: "iteration nudge",
-                manualExtension: "",
                 subagentExtension: "",
                 decompressExtension: "",
+                protectedToolsExtension: "",
+                compressionRequest:
+                    "[ACP compression required]\n\nCandidates: {{candidates}}\n\nCache boundary: {{cacheBoundary}}",
+                howToCompressRules: "",
             }
         },
     }

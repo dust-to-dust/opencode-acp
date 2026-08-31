@@ -35,7 +35,9 @@ const server: Plugin = (async (ctx) => {
     }
 
     if (process.env.BILLION_CONTEXT_PROXY) {
-        console.log("[opencode-acp] disabled: BILLION_CONTEXT_PROXY detected — proxy handles compression")
+        console.log(
+            "[opencode-acp] disabled: BILLION_CONTEXT_PROXY detected — proxy handles compression",
+        )
         return {}
     }
 

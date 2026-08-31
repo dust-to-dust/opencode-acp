@@ -1,6 +1,16 @@
 import assert from "node:assert/strict"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
-import { deepCloneConfig, mergeCompress, type CompressConfig } from "../lib/config"
+import {
+    deepCloneConfig,
+    getConfig,
+    getBundledConfig,
+    mergeCompress,
+    type CompressConfig,
+    type PluginConfig,
+} from "../lib/config"
 import { getInvalidConfigKeys, validateConfigTypes } from "../lib/config-validation"
 import {
     applyCompressOverrides,
@@ -16,6 +26,8 @@ const base: CompressConfig = {
     minContextLimit: "45%",
     nudgeFrequency: 5,
     minNudgeContextPercent: 15,
+    nudgeGrowthTokens: 50_000,
+    toolOutputNudgeThreshold: 20_000,
     nudgeForce: "soft",
     protectedTools: [],
     protectTags: false,
@@ -23,13 +35,155 @@ const base: CompressConfig = {
     maxSummaryLengthHard: 20000,
     minCompressRange: 2000,
     emergencyThresholdPercent: "98%",
+    maxVisibleSegments: 50,
+    keepEmbedMaxChars: 2000,
+    lastSegmentSoftBlock: true,
+    preserveRecentMessages: 5,
+    preserveRecentTokens: 5000,
+    preserveLastUserMessage: true,
 }
+
+test("bundled config is the source of semantic defaults", () => {
+    const bundled = getBundledConfig()
+
+    assert.equal(bundled.compress.minNudgeContextPercent, 5)
+    assert.equal(bundled.compress.nudgeGrowthTokens, 50_000)
+    assert.equal(bundled.compress.protectedTools.includes("compress"), true)
+})
+
+test("mergeCompress inherits omitted optional nudge fields", () => {
+    const merged = mergeCompress(base, { minNudgeContextPercent: 10 })
+
+    assert.equal(merged.nudgeGrowthTokens, 50_000)
+    assert.equal(merged.toolOutputNudgeThreshold, 20_000)
+})
+
+test("mergeCompress preserves explicit false and zero values", () => {
+    const merged = mergeCompress(base, {
+        showCompression: false,
+        protectTags: true,
+        minNudgeContextPercent: 0,
+        toolOutputNudgeThreshold: 0,
+        preserveRecentMessages: 0,
+    })
+
+    assert.equal(merged.showCompression, false)
+    assert.equal(merged.protectTags, true)
+    assert.equal(merged.minNudgeContextPercent, 0)
+    assert.equal(merged.toolOutputNudgeThreshold, 0)
+    assert.equal(merged.preserveRecentMessages, 0)
+})
+
+test("getConfig layers global, config-dir, and nearest project overrides", () => {
+    const root = mkdtempSync(join(tmpdir(), "acp-config-"))
+    const globalHome = join(root, "global-home")
+    const globalDir = join(globalHome, "opencode")
+    const configDir = join(root, "config-dir")
+    const projectRoot = join(root, "project")
+    const projectDirectory = join(projectRoot, "src")
+    const projectConfigDir = join(projectRoot, ".opencode")
+    mkdirSync(globalDir, { recursive: true })
+    mkdirSync(configDir, { recursive: true })
+    mkdirSync(projectDirectory, { recursive: true })
+    mkdirSync(projectConfigDir, { recursive: true })
+
+    writeFileSync(
+        join(globalDir, "acp.jsonc"),
+        JSON.stringify({
+            compress: {
+                showCompression: false,
+                minNudgeContextPercent: 0,
+                nudgeGrowthTokens: 100,
+                providers: {
+                    anthropic: {
+                        nudgeFrequency: 3,
+                        models: { model: { minNudgeContextPercent: 9 } },
+                    },
+                },
+            },
+            gc: { batchCleanup: { lowThreshold: "60%" } },
+            qualityGate: { algorithms: { custom: { one: 1 } } },
+            messageFilters: { filters: { "omo-context": { enabled: false } } },
+        }),
+        "utf8",
+    )
+    writeFileSync(
+        join(configDir, "acp.json"),
+        JSON.stringify({
+            compress: {
+                nudgeGrowthTokens: 200,
+                providers: {
+                    anthropic: {
+                        minNudgeContextPercent: 7,
+                        models: { model: { nudgeGrowthTokens: 300 } },
+                    },
+                },
+            },
+            gc: { batchCleanup: { highThreshold: "80%" } },
+            qualityGate: { algorithms: { custom: { two: 2 } } },
+            messageFilters: { filters: { custom: { enabled: false } } },
+        }),
+        "utf8",
+    )
+    writeFileSync(
+        join(projectConfigDir, "acp.jsonc"),
+        JSON.stringify({
+            compress: {
+                providers: {
+                    anthropic: { models: { model: { nudgeForce: "strong" } } },
+                },
+            },
+            gc: { batchCleanup: { forceThreshold: "95%" } },
+            qualityGate: { algorithms: { custom: { one: 3 } } },
+        }),
+        "utf8",
+    )
+
+    const previousConfigHome = process.env.XDG_CONFIG_HOME
+    const previousConfigDir = process.env.OPENCODE_CONFIG_DIR
+    process.env.XDG_CONFIG_HOME = globalHome
+    process.env.OPENCODE_CONFIG_DIR = configDir
+    try {
+        const config = getConfig({ directory: projectDirectory } as Parameters<typeof getConfig>[0])
+
+        assert.equal(config.compress.showCompression, false)
+        assert.equal(config.compress.minNudgeContextPercent, 0)
+        assert.equal(config.compress.nudgeGrowthTokens, 200)
+        assert.deepEqual(config.compress.providers?.anthropic, {
+            nudgeFrequency: 3,
+            minNudgeContextPercent: 7,
+            models: {
+                model: {
+                    minNudgeContextPercent: 9,
+                    nudgeGrowthTokens: 300,
+                    nudgeForce: "strong",
+                },
+            },
+        })
+        assert.deepEqual(config.gc.batchCleanup, {
+            lowThreshold: "60%",
+            highThreshold: "80%",
+            forceThreshold: "95%",
+        })
+        assert.deepEqual(config.qualityGate.algorithms.custom, { one: 3, two: 2 })
+        assert.equal(config.messageFilters.filters["omo-context"].enabled, false)
+        assert.equal(config.messageFilters.filters.custom.enabled, false)
+    } finally {
+        if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME
+        else process.env.XDG_CONFIG_HOME = previousConfigHome
+        if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR
+        else process.env.OPENCODE_CONFIG_DIR = previousConfigDir
+        rmSync(root, { recursive: true, force: true })
+    }
+})
 
 // ── mergeCompress: nested providers deep-merge across config layers ──
 
 test("providers: override layer wins when base has no providers", () => {
     const merged = mergeCompress(base, {
-        providers: { anthropic: { models: { "claude-sonnet-4-6": { minNudgeContextPercent: 10 } } } },
+        providers: {
+            anthropic: { models: { "claude-sonnet-4-6": { minNudgeContextPercent: 10 } } },
+        },
     })
     assert.deepEqual(merged.providers, {
         anthropic: { models: { "claude-sonnet-4-6": { minNudgeContextPercent: 10 } } },
@@ -102,21 +256,29 @@ test("providers: a higher layer cannot clear a provider/model it leaves unset", 
 })
 
 test("providers: deepCloneConfig isolates the nested maps", () => {
-    const config = {
+    const config: PluginConfig = {
         enabled: true,
         autoUpdate: true,
         debug: false,
+        logLevel: "info",
+        allowSubAgents: false,
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        experimental: { customPrompts: false },
         protectedFilePatterns: [],
         compress: {
             ...base,
             providers: {
                 anthropic: {
+                    protectedTools: ["provider-tool"],
                     minNudgeContextPercent: 8,
-                    models: { "claude-sonnet-4-6": { minNudgeContextPercent: 10 } },
+                    models: {
+                        "claude-sonnet-4-6": {
+                            minNudgeContextPercent: 10,
+                            protectedTools: ["model-tool"],
+                        },
+                    },
                 },
             },
         },
@@ -137,15 +299,27 @@ test("providers: deepCloneConfig isolates the nested maps", () => {
             enabled: false,
             filters: {},
         },
-    } as any
+    }
     const clone = deepCloneConfig(config)
     // Mutate every nested level of the clone.
     clone.compress.providers!.anthropic.minNudgeContextPercent = 99
     clone.compress.providers!.anthropic.models!["claude-sonnet-4-6"]!.minNudgeContextPercent = 99
     clone.compress.providers!.openai = { minNudgeContextPercent: 99 }
+    clone.compress.providers!.anthropic.protectedTools!.push("clone-provider-tool")
+    clone.compress.providers!.anthropic.models!["claude-sonnet-4-6"]!.protectedTools!.push(
+        "clone-model-tool",
+    )
     // The original is untouched.
-    assert.equal(config.compress.providers.anthropic.minNudgeContextPercent, 8)
-    assert.equal(config.compress.providers.anthropic.models["claude-sonnet-4-6"].minNudgeContextPercent, 10)
+    assert.equal(config.compress.providers!.anthropic.minNudgeContextPercent, 8)
+    assert.equal(
+        config.compress.providers!.anthropic.models!["claude-sonnet-4-6"]!.minNudgeContextPercent,
+        10,
+    )
+    assert.deepEqual(config.compress.providers!.anthropic.protectedTools, ["provider-tool"])
+    assert.deepEqual(
+        config.compress.providers!.anthropic.models!["claude-sonnet-4-6"]!.protectedTools,
+        ["model-tool"],
+    )
     assert.equal(config.compress.providers.openai, undefined)
 })
 
@@ -168,22 +342,25 @@ test("providers: valid nested config passes validation and key walking", () => {
 })
 
 test("providers: rejects non-object providers / provider / models entries", () => {
-    assert.deepEqual(validateConfigTypes({ compress: { providers: "nope" } }).map((e) => e.key), [
-        "compress.providers",
-    ])
     assert.deepEqual(
-        validateConfigTypes({ compress: { providers: { anthropic: 5 } } }).map((e) => e.key),
-        ["compress.providers.anthropic"]
+        validateConfigTypes({ compress: { providers: "nope" } }).map((e) => e.key),
+        ["compress.providers"],
     )
     assert.deepEqual(
-        validateConfigTypes({ compress: { providers: { anthropic: { models: 5 } } } }).map((e) => e.key),
-        ["compress.providers.anthropic.models"]
+        validateConfigTypes({ compress: { providers: { anthropic: 5 } } }).map((e) => e.key),
+        ["compress.providers.anthropic"],
+    )
+    assert.deepEqual(
+        validateConfigTypes({ compress: { providers: { anthropic: { models: 5 } } } }).map(
+            (e) => e.key,
+        ),
+        ["compress.providers.anthropic.models"],
     )
     assert.deepEqual(
         validateConfigTypes({
             compress: { providers: { anthropic: { models: { "claude-x": 5 } } } },
         }).map((e) => e.key),
-        ["compress.providers.anthropic.models.claude-x"]
+        ["compress.providers.anthropic.models.claude-x"],
     )
 })
 
@@ -212,13 +389,13 @@ test("providers: unknown fields are rejected (typo safety)", () => {
         validateConfigTypes({
             compress: { providers: { anthropic: { minNudgeContextPecent: 10 } } },
         }).map((e) => e.key),
-        ["compress.providers.anthropic.minNudgeContextPecent"]
+        ["compress.providers.anthropic.minNudgeContextPecent"],
     )
     assert.deepEqual(
         validateConfigTypes({
             compress: { providers: { anthropic: { models: { m: { floor: 10 } } } } },
         }).map((e) => e.key),
-        ["compress.providers.anthropic.models.m.floor"]
+        ["compress.providers.anthropic.models.m.floor"],
     )
 })
 
@@ -290,7 +467,7 @@ test("all-field cascade: applyCompressOverrides swaps fields but never maxContex
     assert.equal(applied.compress.maxContextLimit, "55%")
     // The input config is never mutated.
     assert.equal(config.compress.nudgeFrequency, 5)
-    assert.equal(config.compress.nudgeGrowthTokens, undefined)
+    assert.equal(config.compress.nudgeGrowthTokens, 50_000)
 })
 
 test("all-field cascade: nested maxContextLimit beats the flat modelMaxLimits map", () => {
@@ -310,10 +487,13 @@ test("all-field cascade: nested maxContextLimit beats the flat modelMaxLimits ma
     const state = { modelContextLimit: 1000000 } as Parameters<typeof resolveContextTokenLimit>[1]
     assert.equal(
         resolveContextTokenLimit(config, state, "anthropic", "claude-sonnet-4-6", "max"),
-        250000
+        250000,
     )
     // A sibling model still uses the flat map; an unknown model uses the global.
-    assert.equal(resolveContextTokenLimit(config, state, "anthropic", "claude-haiku-4-5", "max"), 300000)
+    assert.equal(
+        resolveContextTokenLimit(config, state, "anthropic", "claude-haiku-4-5", "max"),
+        300000,
+    )
     assert.equal(resolveContextTokenLimit(config, state, "openai", "gpt-5", "max"), 550000)
 })
 

@@ -66,7 +66,7 @@ export const injectCompressNudges = (
     config: PluginConfig,
     logger: Logger,
     messages: WithParts[],
-    _prompts: RuntimePrompts,
+    prompts: RuntimePrompts,
     _compressionPriorities?: CompressionPriorityMap,
     debugNotify?: (text: string) => void,
     _preCompressTokens?: number,
@@ -86,8 +86,8 @@ export const injectCompressNudges = (
     )
     const nudgeGrowthTokens = config.compress?.nudgeGrowthTokens ?? DEFAULT_NUDGE_GROWTH_TOKENS
     const growthFloor = Math.max(
-        config.compress?.minNudgeGrowthFloor ?? 5000,
-        (config.compress?.minNudgeGrowthRatio ?? 0.45) * nudgeGrowthTokens,
+        config.compress.minNudgeGrowthFloor,
+        config.compress.minNudgeGrowthRatio * nudgeGrowthTokens,
     )
     const emergencyThreshold = resolveEmergencyThreshold(config, modelContextLimit)
     const emergencyOverride =
@@ -111,7 +111,7 @@ export const injectCompressNudges = (
             if (suffixMessage) {
                 appendToLastTextPart(
                     suffixMessage,
-                    renderCompressionRequest(pending.candidates, pending.cacheBoundary),
+                    renderCompressionRequest(prompts, pending.candidates, pending.cacheBoundary),
                 )
                 finishSuffix(messages, suffixMessage, debugNotify)
             }
@@ -195,7 +195,7 @@ export const injectCompressNudges = (
         if (suffixMessage) {
             appendToLastTextPart(
                 suffixMessage,
-                renderCompressionRequest(pending.candidates, pending.cacheBoundary),
+                renderCompressionRequest(prompts, pending.candidates, pending.cacheBoundary),
             )
             finishSuffix(messages, suffixMessage, debugNotify)
         }
@@ -333,18 +333,18 @@ function finishSuffix(
     if (text) debugNotify(text)
 }
 
-function renderCompressionRequest(candidates: string[], cacheBoundary: string): string {
+function renderCompressionRequest(
+    prompts: RuntimePrompts,
+    candidates: string[],
+    cacheBoundary: string,
+): string {
     const lines: string[] = []
     for (let index = 0; index < candidates.length; index += 30) {
         lines.push(candidates.slice(index, index + 30).join(", "))
     }
-    return [
-        "[ACP compression required]",
-        "Call `compress` before continuing.",
-        "Eligible blocks (oldest first):",
-        lines.join("\n"),
-        `Cache boundary: ${cacheBoundary}. Content after this boundary and unlisted blocks are not eligible.`,
-    ].join("\n")
+    return prompts.compressionRequest
+        .replace("{{candidates}}", lines.join("\n"))
+        .replace("{{cacheBoundary}}", cacheBoundary)
 }
 
 function resolveEmergencyThreshold(
@@ -469,7 +469,7 @@ function injectVisibleIdRange(
     if (!target) return
     const segments = buildVisibleSegments(state, messages)
     if (segments.length === 0) return
-    const maxSegs = config.compress?.maxVisibleSegments ?? 50
+    const maxSegs = config.compress.maxVisibleSegments
     const rangeTag = "\n\n" + formatVisibleGuidance(segments, maxSegs)
 
     for (const part of target.parts) {

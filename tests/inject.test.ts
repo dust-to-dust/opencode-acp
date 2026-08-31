@@ -15,20 +15,33 @@ import {
 
 const SID = "ses-inject-selection"
 const logger = new Logger(false)
-const prompts = {} as RuntimePrompts
+const prompts = {
+    system: "",
+    compressRange: "",
+    contextLimitNudge: "",
+    turnNudge: "",
+    iterationNudge: "",
+    subagentExtension: "",
+    decompressExtension: "",
+    protectedToolsExtension: "",
+    howToCompressRules: "",
+    compressionRequest:
+        "[ACP compression required]\nCall `compress` before continuing.\nEligible blocks (oldest first):\n{{candidates}}\nCache boundary: {{cacheBoundary}}. Content after this boundary and unlisted blocks are not eligible.\nTemplate marker: semantic",
+} as RuntimePrompts
 
 function buildConfig(): PluginConfig {
     return {
         enabled: true,
         autoUpdate: true,
         debug: false,
+        logLevel: "info",
+        allowSubAgents: true,
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        experimental: { customPrompts: false },
         protectedFilePatterns: [],
         compress: {
-            mode: "range",
             permission: "allow",
             showCompression: false,
             summaryBuffer: true,
@@ -65,6 +78,15 @@ function buildConfig(): PluginConfig {
                 highThreshold: "75%",
                 forceThreshold: "90%",
             },
+        },
+        qualityGate: {
+            enabled: false,
+            algorithm: "rouge-recall-v1",
+            algorithms: {},
+        },
+        messageFilters: {
+            enabled: true,
+            filters: {},
         },
     }
 }
@@ -254,6 +276,7 @@ test("multi-turn growth freezes a short cache-safe selection request", () => {
     assert.match(request, /^\[ACP compression required\]/)
     assert.match(request, /Eligible blocks \(oldest first\):\nA002/)
     assert.match(request, /Cache boundary: A002/)
+    assert.match(request, /Template marker: semantic/)
     assert.doesNotMatch(request, /Confirmed facts|compression philosophy|HOW TO COMPRESS/i)
 
     const pendingTurn = transformed(raw)

@@ -126,7 +126,10 @@ export function createSystemPromptHandler(
         const runtimePrompts = prompts.getRuntimePrompts()
         const newPrompt = renderSystemPrompt(
             runtimePrompts,
-            buildProtectedToolsExtension(config.compress.protectedTools),
+            buildProtectedToolsExtension(
+                config.compress.protectedTools,
+                runtimePrompts.protectedToolsExtension,
+            ),
             state.isSubAgent && config.allowSubAgents,
         )
         if (output.system.length > 0) {

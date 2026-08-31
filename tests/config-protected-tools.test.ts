@@ -10,6 +10,7 @@ const base: CompressConfig = {
     minContextLimit: "45%",
     nudgeFrequency: 5,
     minNudgeContextPercent: 15,
+    nudgeGrowthTokens: 50_000,
     iterationNudgeThreshold: 15,
     nudgeForce: "soft",
     protectedTools: ["skill"],
@@ -22,6 +23,10 @@ const base: CompressConfig = {
     emergencyThresholdPercent: "98%",
     maxVisibleSegments: 50,
     keepEmbedMaxChars: 2000,
+    lastSegmentSoftBlock: true,
+    preserveRecentMessages: 5,
+    preserveRecentTokens: 5000,
+    preserveLastUserMessage: true,
 }
 
 test("no override returns base protectedTools unchanged", () => {
@@ -29,7 +34,10 @@ test("no override returns base protectedTools unchanged", () => {
 })
 
 test("explicit override replaces inherited policy but 'compress' is force-appended", () => {
-    assert.deepEqual(mergeCompress(base, { protectedTools: ["task"] }).protectedTools, ["task", "compress"])
+    assert.deepEqual(mergeCompress(base, { protectedTools: ["task"] }).protectedTools, [
+        "task",
+        "compress",
+    ])
 })
 
 test("empty array override still force-protects 'compress'", () => {
@@ -37,7 +45,10 @@ test("empty array override still force-protects 'compress'", () => {
 })
 
 test("override that already includes 'compress' does not duplicate", () => {
-    assert.deepEqual(mergeCompress(base, { protectedTools: ["skill", "compress"] }).protectedTools, ["skill", "compress"])
+    assert.deepEqual(
+        mergeCompress(base, { protectedTools: ["skill", "compress"] }).protectedTools,
+        ["skill", "compress"],
+    )
 })
 
 test("force-protection survives across multiple config merge layers", () => {

@@ -6,6 +6,7 @@ import process from "node:process"
 import { fileURLToPath } from "node:url"
 
 const require = createRequire(import.meta.url)
+const { parse: parseJsonc } = require("jsonc-parser")
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 
 const builtinNames = new Set([
@@ -21,6 +22,19 @@ const requiredTarballFiles = [
     "dist/index.d.ts",
     "README.md",
     "LICENSE",
+]
+
+const activePromptAssets = [
+    "system.md",
+    "compress-range.md",
+    "context-limit-nudge.md",
+    "turn-nudge.md",
+    "iteration-nudge.md",
+    "subagent-extension.md",
+    "decompress-extension.md",
+    "protected-tools.md",
+    "compression-request.md",
+    "how-to-compress.md",
 ]
 
 const forbiddenTarballPatterns = [
@@ -68,10 +82,54 @@ function assertPackageJsonShape() {
     }
 
     const files = Array.isArray(pkg.files) ? pkg.files : []
-    for (const entry of ["dist/", "README.md", "LICENSE"]) {
+    for (const entry of ["dist/", "config/", "README.md", "LICENSE"]) {
         if (!files.includes(entry)) {
             fail(`package.json files must include ${entry}`)
         }
+    }
+}
+
+function assertConfigAsset() {
+    const relativePath = "config/acp.jsonc"
+    const filePath = path.join(root, relativePath)
+    if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+        fail(`missing config asset: ${relativePath}`)
+    }
+
+    const content = readFileSync(filePath, "utf8")
+    if (!content.trim()) {
+        fail(`config asset is empty: ${relativePath}`)
+    }
+    if (/<{7}|={7}|>{7}/.test(content)) {
+        fail(`config asset contains conflict markers: ${relativePath}`)
+    }
+
+    const errors = []
+    const parsed = parseJsonc(content, errors, { allowTrailingComma: true })
+    if (errors.length > 0 || !parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        fail(`config asset is not a valid JSONC object: ${relativePath}`)
+    }
+
+    requiredTarballFiles.push(relativePath)
+}
+
+function assertPromptAssets() {
+    for (const asset of activePromptAssets) {
+        const relativePath = path.join("config", "prompts", asset)
+        const filePath = path.join(root, relativePath)
+        if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+            fail(`missing prompt asset: ${relativePath}`)
+        }
+
+        const content = readFileSync(filePath, "utf8").trim()
+        if (!content) {
+            fail(`prompt asset is empty: ${relativePath}`)
+        }
+        if (/<{7}|={7}|>{7}/.test(content)) {
+            fail(`prompt asset contains conflict markers: ${relativePath}`)
+        }
+
+        requiredTarballFiles.push(relativePath.replaceAll(path.sep, "/"))
     }
 }
 
@@ -178,10 +236,6 @@ function validateRuntimeImportGraph() {
                 continue
             }
 
-            if (entry.specifier === "jsonc-parser/lib/esm/main.js") {
-                continue
-            }
-
             const packageName = getPackageName(entry.specifier)
             if (builtinNames.has(packageName)) continue
 
@@ -204,10 +258,15 @@ function validatePackedFiles() {
     // breaks JSON.parse. dist/ is already built by `check:package` before this
     // runs, and pr-artifact.yml publishes with --ignore-scripts for the same
     // reason.
-    const output = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-        cwd: root,
-        encoding: "utf8",
-    })
+    const packArgs = ["pack", "--dry-run", "--json", "--ignore-scripts"]
+    const npmExecPath = process.env.npm_execpath
+    const command = npmExecPath ? process.execPath : process.platform === "win32" ? "cmd.exe" : "npm"
+    const args = npmExecPath
+        ? [npmExecPath, ...packArgs]
+        : process.platform === "win32"
+          ? ["/d", "/s", "/c", "npm", ...packArgs]
+          : packArgs
+    const output = execFileSync(command, args, { cwd: root, encoding: "utf8" })
 
     const [result] = JSON.parse(output)
     if (!result || !Array.isArray(result.files)) {
@@ -234,5 +293,7 @@ function validatePackedFiles() {
 
 assertRepoFilesExist()
 assertPackageJsonShape()
+assertConfigAsset()
+assertPromptAssets()
 validateRuntimeImportGraph()
 validatePackedFiles()

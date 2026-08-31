@@ -1,122 +1,159 @@
 import assert from "node:assert/strict"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import test from "node:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Logger } from "../lib/logger"
 import { PromptStore } from "../lib/prompts/store"
-import { SYSTEM as SYSTEM_PROMPT } from "../lib/prompts/system"
 
-function createPromptStoreFixture(overrideContent?: string, overrideFileName = "system.md") {
-    const rootDir = mkdtempSync(join(tmpdir(), "opencode-dcp-prompts-"))
+interface PromptFixture {
+    configHome: string
+    configDir: string
+    workspaceDir: string
+    globalOverridesDir: string
+    configOverridesDir: string
+    projectOverridesDir: string
+    cleanup: () => void
+}
+
+function createFixture(): PromptFixture {
+    const rootDir = mkdtempSync(join(tmpdir(), "opencode-acp-prompts-"))
     const configHome = join(rootDir, "config")
-    const workspaceDir = join(rootDir, "workspace")
-
-    mkdirSync(configHome, { recursive: true })
+    const configDir = join(rootDir, "config-dir")
+    const workspaceDir = join(rootDir, "workspace", "nested")
+    const globalOverridesDir = join(configHome, "opencode", "acp-prompts", "overrides")
+    const configOverridesDir = join(configDir, "acp-prompts", "overrides")
+    const projectOverridesDir = join(rootDir, "workspace", ".opencode", "acp-prompts", "overrides")
     mkdirSync(workspaceDir, { recursive: true })
+    mkdirSync(globalOverridesDir, { recursive: true })
+    mkdirSync(configOverridesDir, { recursive: true })
+    mkdirSync(projectOverridesDir, { recursive: true })
 
     const previousConfigHome = process.env.XDG_CONFIG_HOME
-    const previousOpencodeConfigDir = process.env.OPENCODE_CONFIG_DIR
-
+    const previousConfigDir = process.env.OPENCODE_CONFIG_DIR
     process.env.XDG_CONFIG_HOME = configHome
-    delete process.env.OPENCODE_CONFIG_DIR
-
-    if (overrideContent !== undefined) {
-        const overrideDir = join(configHome, "opencode", "acp-prompts", "overrides")
-        mkdirSync(overrideDir, { recursive: true })
-        writeFileSync(join(overrideDir, overrideFileName), overrideContent, "utf-8")
-    }
-
-    const store = new PromptStore(new Logger(false), workspaceDir, true)
+    process.env.OPENCODE_CONFIG_DIR = configDir
 
     return {
-        store,
+        configHome,
+        configDir,
+        workspaceDir,
+        globalOverridesDir,
+        configOverridesDir,
+        projectOverridesDir,
         cleanup() {
             if (previousConfigHome === undefined) {
                 delete process.env.XDG_CONFIG_HOME
             } else {
                 process.env.XDG_CONFIG_HOME = previousConfigHome
             }
-
-            if (previousOpencodeConfigDir === undefined) {
+            if (previousConfigDir === undefined) {
                 delete process.env.OPENCODE_CONFIG_DIR
             } else {
-                process.env.OPENCODE_CONFIG_DIR = previousOpencodeConfigDir
+                process.env.OPENCODE_CONFIG_DIR = previousConfigDir
             }
-
             rmSync(rootDir, { recursive: true, force: true })
         },
     }
 }
 
-test("system prompt overrides handle reminder tags safely", async (t) => {
-    await t.test("plain-text mentions do not invalidate copied system prompt overrides", () => {
-        const fixture = createPromptStoreFixture(
-            `${SYSTEM_PROMPT.trim()}\n\nExtra override line.\n`,
-        )
+function writePrompt(directory: string, fileName: string, content: string): void {
+    writeFileSync(join(directory, fileName), content, "utf-8")
+}
 
-        try {
-            const runtimeSystemPrompt = fixture.store.getRuntimePrompts().system
+test("bundled prompts are semantic, file-backed, and complete", () => {
+    const prompts = new PromptStore(new Logger(false)).getRuntimePrompts()
 
-            assert.match(runtimeSystemPrompt, /Extra override line\./)
-        } finally {
-            fixture.cleanup()
-        }
-    })
+    assert.match(prompts.system, /immutable activity blocks and checkpoints/i)
+    assert.match(prompts.system, /HOW TO SELECT/)
+    assert.match(prompts.compressRange, /Select which eligible context blocks remain verbatim/i)
+    assert.doesNotMatch(prompts.compressRange, /Collapse a range in the conversation/i)
+    assert.doesNotMatch(prompts.compressRange, /<{7}|={7}|>{7}/)
+    assert.match(prompts.protectedToolsExtension, /\{\{toolList\}\}/)
+    assert.match(prompts.compressionRequest, /\{\{candidates\}\}/)
+    assert.match(prompts.compressionRequest, /\{\{cacheBoundary\}\}/)
 
-    await t.test("fully wrapped overrides are normalized to a single runtime wrapper", () => {
-        const fixture = createPromptStoreFixture(
-            `<dcp-system-reminder>\nWrapped override body\n</dcp-system-reminder>\n`,
-        )
-
-        try {
-            const runtimeSystemPrompt = fixture.store.getRuntimePrompts().system
-            const openingTags = runtimeSystemPrompt.match(/<dcp-system-reminder\b[^>]*>/g) ?? []
-            const closingTags = runtimeSystemPrompt.match(/<\/dcp-system-reminder>/g) ?? []
-
-            assert.equal(openingTags.length, 1)
-            assert.equal(closingTags.length, 1)
-            assert.match(runtimeSystemPrompt, /Wrapped override body/)
-        } finally {
-            fixture.cleanup()
-        }
-    })
-
-    await t.test("malformed boundary wrappers are rejected", () => {
-        const baselineFixture = createPromptStoreFixture()
-        const malformedFixture = createPromptStoreFixture(
-            `<dcp-system-reminder>\nMalformed override body\n`,
-        )
-
-        try {
-            const baselineSystemPrompt = baselineFixture.store.getRuntimePrompts().system
-            const malformedSystemPrompt = malformedFixture.store.getRuntimePrompts().system
-
-            assert.equal(malformedSystemPrompt, baselineSystemPrompt)
-            assert.doesNotMatch(malformedSystemPrompt, /Malformed override body/)
-        } finally {
-            malformedFixture.cleanup()
-            baselineFixture.cleanup()
-        }
-    })
+    for (const value of Object.values(prompts)) {
+        assert.ok(value.trim())
+    }
 })
 
-test("prompt store exposes bundled checkpoint-selection prompt", () => {
-    const fixture = createPromptStoreFixture()
-
+test("custom prompts can be disabled without reading overrides", () => {
+    const fixture = createFixture()
     try {
-        const runtimePrompts = fixture.store.getRuntimePrompts()
+        writePrompt(fixture.projectOverridesDir, "system.md", "Project override")
 
-        assert.match(
-            runtimePrompts.compressRange,
-            /Select which eligible context blocks remain verbatim/i,
+        const prompts = new PromptStore(
+            new Logger(false),
+            fixture.workspaceDir,
+            false,
+        ).getRuntimePrompts()
+
+        assert.match(prompts.system, /immutable activity blocks and checkpoints/i)
+        assert.doesNotMatch(prompts.system, /Project override/)
+        assert.equal(
+            existsSync(join(fixture.configHome, "opencode", "acp-prompts", "defaults")),
+            false,
         )
-        assert.match(runtimePrompts.compressRange, /candidate IDs in keep/i)
-        assert.match(
-            runtimePrompts.compressRange,
-            /omitted from keep are replaced by one checkpoint/i,
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test("custom prompts use project, config-dir, then global precedence", () => {
+    const fixture = createFixture()
+    try {
+        writePrompt(fixture.globalOverridesDir, "system.md", "Global override")
+        writePrompt(fixture.configOverridesDir, "system.md", "Config override")
+        writePrompt(fixture.projectOverridesDir, "system.md", "Project override")
+
+        const prompts = new PromptStore(
+            new Logger(false),
+            fixture.workspaceDir,
+            true,
+        ).getRuntimePrompts()
+
+        assert.match(prompts.system, /Project override/)
+        assert.match(prompts.system, /^<dcp-system-reminder>/)
+        assert.doesNotMatch(prompts.system, /Config override|Global override/)
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test("empty and malformed overrides fall back to the next valid layer", () => {
+    const fixture = createFixture()
+    try {
+        writePrompt(fixture.configOverridesDir, "system.md", "Config fallback")
+        writePrompt(fixture.projectOverridesDir, "system.md", "<dcp-system-reminder>broken")
+
+        const store = new PromptStore(new Logger(false), fixture.workspaceDir, true)
+        assert.match(store.getRuntimePrompts().system, /Config fallback/)
+
+        writePrompt(fixture.projectOverridesDir, "system.md", "   \n")
+        store.reload()
+        assert.match(store.getRuntimePrompts().system, /Config fallback/)
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test("reload applies normalized overrides and preserves a single wrapper", () => {
+    const fixture = createFixture()
+    try {
+        const store = new PromptStore(new Logger(false), fixture.workspaceDir, true)
+        writePrompt(
+            fixture.globalOverridesDir,
+            "system.md",
+            "\uFEFF<!-- copied comment -->\n<dcp-system-reminder>\nReloaded system\n</dcp-system-reminder>\n",
         )
-        assert.match(runtimePrompts.compressRange, /confirmedFacts and nextSteps/)
+
+        store.reload()
+        const system = store.getRuntimePrompts().system
+        assert.match(system, /Reloaded system/)
+        assert.equal((system.match(/<dcp-system-reminder>/g) ?? []).length, 1)
+        assert.equal((system.match(/<\/dcp-system-reminder>/g) ?? []).length, 1)
+        assert.doesNotMatch(system, /copied comment/)
     } finally {
         fixture.cleanup()
     }

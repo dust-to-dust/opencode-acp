@@ -17,7 +17,7 @@
         }
     },
     "scripts": {
-        "clean": "rm -rf dist",
+        "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
         "build": "npm run clean && tsup && tsc --emitDeclarationOnly",
         "prepare": "npm run build 1>&2",
         "verify:package": "node scripts/verify-package.mjs",
@@ -72,6 +72,7 @@
     },
     "files": [
         "dist/",
+        "config/",
         "README.md",
         "README.zh-CN.md",
         "LICENSE",

@@ -1,0 +1,1 @@
+Context limit reached - time to compress the largest ranges you no longer need. Prioritize completed tool outputs and resolved work. You can decompress specific checkpoints later when exact details are needed. If you are in the middle of an atomic operation, finish that step first.
