@@ -1,6 +1,11 @@
 import { tool } from "@opencode-ai/plugin"
 import type { CompressionBlock } from "../state/types"
 import { type ToolFactoryContext, resolveToolContext } from "./types"
+import { formatBlockRef } from "../message-ids"
+
+function checkpointRef(block: CompressionBlock): string {
+    return block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1)
+}
 
 function formatCoverage(block: CompressionBlock): string {
     const count = block.effectiveMessageIds?.length || 0
@@ -21,7 +26,9 @@ export function createAcpContextRecapTool(factoryCtx: ToolFactoryContext): Retur
             blockId: tool.schema
                 .number()
                 .optional()
-                .describe("Block number to retrieve (e.g., 5). If omitted, lists all active blocks."),
+                .describe(
+                    "Block number to retrieve (e.g., 5). If omitted, lists all active blocks.",
+                ),
         },
         async execute(args, toolCtx) {
             const ctx = resolveToolContext(factoryCtx, toolCtx.sessionID)
@@ -35,13 +42,17 @@ export function createAcpContextRecapTool(factoryCtx: ToolFactoryContext): Retur
             if (args.blockId !== undefined) {
                 const block = msgState.blocksById.get(args.blockId)
                 if (!block) {
-                    return `Block b${args.blockId} not found. Active blocks: ${activeIds.map((id) => `b${id}`).join(", ")}`
+                    return `Checkpoint ${args.blockId} not found. Active checkpoints: ${activeIds
+                        .map((id) => msgState.blocksById.get(id))
+                        .filter((item): item is CompressionBlock => item !== undefined)
+                        .map(checkpointRef)
+                        .join(", ")}`
                 }
                 if (!block.active) {
-                    return `Block b${args.blockId} is inactive (deactivated by GC or nested compression).`
+                    return `Checkpoint ${checkpointRef(block)} is inactive or consumed.`
                 }
                 const range = formatCoverage(block)
-                return `[Compressed conversation section]\n${block.summary}\n\n[Block b${args.blockId} | ${range} | topic: "${block.topic || "(none)"}"]`
+                return `[Compressed conversation section]\n${block.summary}\n\n[Checkpoint ${checkpointRef(block)} | ${range}]`
             }
 
             const lines: string[] = []
@@ -51,10 +62,12 @@ export function createAcpContextRecapTool(factoryCtx: ToolFactoryContext): Retur
                 if (!block || !block.active) continue
                 const range = formatCoverage(block)
                 const summaryPreview = block.summary.slice(0, 200)
-                lines.push(`\nb${id} | ${range} | "${block.topic || "(none)"}"`)
+                lines.push(`\n${checkpointRef(block)} | ${range}`)
                 lines.push(`  ${summaryPreview}${block.summary.length > 200 ? "..." : ""}`)
             }
-            lines.push(`\nCall with blockId to get the full summary: acp_context_recap({ blockId: N })`)
+            lines.push(
+                `\nCall with blockId to get the full summary: acp_context_recap({ blockId: N })`,
+            )
             return lines.join("\n")
         },
     })

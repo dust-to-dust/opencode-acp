@@ -3,12 +3,13 @@ import test from "node:test"
 import { createAcpStatusTool } from "../lib/compress/status"
 import type { ToolFactoryContext } from "../lib/compress/types"
 import type { CompressionBlock, PrunedMessageEntry, SessionState } from "../lib/state/types"
+import { formatBlockRef } from "../lib/message-ids"
 import { singletonRegistry } from "./registry-stub"
 
 const SID = "session-acp-status-test"
 
 function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
-    return {
+    const block: CompressionBlock = {
         blockId: 1,
         runId: 1,
         active: true,
@@ -18,8 +19,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "m00001",
-        endId: "m00003",
+        startId: "A001",
+        endId: "A003",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -36,8 +37,11 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         summary: "a summary",
         survivedCount: 0,
         generation: "young",
+        tier: 1,
         ...overrides,
     }
+    block.ref = formatBlockRef(block.blockId, block.tier ?? 1)
+    return block
 }
 
 function makeState(activeIds: number[], blocks: Map<number, CompressionBlock>): SessionState {
@@ -66,7 +70,7 @@ function makeState(activeIds: number[], blocks: Map<number, CompressionBlock>): 
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
         compressionTiming: {} as any,
         toolParameters: new Map(),
-            toolIdList: [],
+        toolIdList: [],
         messageIds: { byRawId: new Map(), byRef: new Map(), nextRef: 1 },
         lastCompaction: 0,
         currentTurn: 0,
@@ -122,23 +126,27 @@ test("acp_status: empty state returns no-blocks message", async () => {
 })
 
 test("acp_status: single block shows correct header with summary and original sizes", async () => {
-    const blocks = blocksMap(makeBlock({ blockId: 1, summaryTokens: 750, compressedTokens: 5000, topic: "My topic" }))
+    const blocks = blocksMap(
+        makeBlock({ blockId: 1, summaryTokens: 750, compressedTokens: 5000, topic: "My topic" }),
+    )
     const result = await runStatus([1], blocks)
 
     assert.match(result, /COMPRESSED BLOCKS/)
-    assert.match(result, /b1/)
+    assert.match(result, /B001/)
     assert.match(result, /"My topic"/)
 })
 
 test("acp_status: plural header for multiple blocks", async () => {
     const blocks = blocksMap(
         makeBlock({ blockId: 1, summaryTokens: 750, compressedTokens: 5000 }),
-        makeBlock({ blockId: 2, summaryTokens: 300, compressedTokens: 2000 }),
+        makeBlock({ blockId: 2, tier: 4, summaryTokens: 300, compressedTokens: 2000 }),
     )
     const result = await runStatus([1, 2], blocks)
 
     assert.match(result, /2 active/)
     assert.match(result, /1\.1K summary/)
+    assert.match(result, /E002/)
+    assert.match(result, /T4: 300/)
 })
 
 test("acp_status: block with no topic shows (no topic)", async () => {
@@ -169,9 +177,7 @@ test("acp_status: overview shows message count for block coverage", async () => 
 })
 
 test("acp_status: coverage shows single message count", async () => {
-    const blocks = blocksMap(
-        makeBlock({ blockId: 1, effectiveMessageIds: ["a"] }),
-    )
+    const blocks = blocksMap(makeBlock({ blockId: 1, effectiveMessageIds: ["a"] }))
     const result = await runStatus([1], blocks)
 
     assert.match(result, /1 msg\b/)
@@ -189,12 +195,15 @@ test("acp_status: scope=compressed shows detailed block info", async () => {
     const blocks = blocksMap(
         makeBlock({
             blockId: 1,
+            tier: 4,
             survivedCount: 3,
             generation: "old",
             effectiveMessageIds: ["a", "b", "c", "d"],
             includedBlockIds: [2, 3],
             consumedBlockIds: [2, 3],
         }),
+        makeBlock({ blockId: 2, tier: 1, active: false, topic: "nested-one" }),
+        makeBlock({ blockId: 3, tier: 2, active: false, topic: "nested-two" }),
     )
     const result = await runStatus([1], blocks, { scope: "compressed" })
 
@@ -202,7 +211,7 @@ test("acp_status: scope=compressed shows detailed block info", async () => {
     assert.match(result, /age=3/)
     assert.match(result, /old/)
     assert.match(result, /eff=4/)
-    assert.match(result, /nested=\[b2,b3\]/)
+    assert.match(result, /nested=\[B002,C003\]/)
 })
 
 test("acp_status: scope=compressed sort=size orders largest first", async () => {
@@ -262,13 +271,16 @@ test("acp_status: scope=compressed includes decompress hint", async () => {
     assert.match(result, /search_context/)
 })
 
-test("acp_status: scope=uncompressed defaults to ranges view", async () => {
+test("acp_status: scope=uncompressed defaults to activities view", async () => {
     const mockMsgs = [
-        { info: { id: "raw-1", role: "assistant" }, parts: [{ type: "text", text: "hello world" }] },
+        {
+            info: { id: "raw-1", role: "assistant" },
+            parts: [{ type: "text", text: "hello world" }],
+        },
     ]
     const mockClient = makeMockClient(mockMsgs)
     const state = makeState([], new Map())
-    state.messageIds.byRawId.set("raw-1", "m00001")
+    state.messageIds.byRawId.set("raw-1", "A001")
     const ctx: ToolFactoryContext = {
         client: mockClient,
         registry: singletonRegistry(state),
@@ -277,19 +289,24 @@ test("acp_status: scope=uncompressed defaults to ranges view", async () => {
         prompts: { reload: () => {} } as any,
     }
     const statusTool = createAcpStatusTool(ctx)
-    const result = await statusTool.execute({ scope: "uncompressed" } as any, { sessionID: SID } as any)
+    const result = await statusTool.execute(
+        { scope: "uncompressed" } as any,
+        { sessionID: SID } as any,
+    )
 
-    assert.match(result, /UNCOMPRESSED/)
-    assert.match(result, /ranges/)
+    assert.match(result, /ELIGIBLE ACTIVITIES/)
 })
 
 test("acp_status: scope=uncompressed view=messages shows per-message listing", async () => {
     const mockMsgs = [
-        { info: { id: "raw-1", role: "assistant" }, parts: [{ type: "text", text: "hello world" }] },
+        {
+            info: { id: "raw-1", role: "assistant" },
+            parts: [{ type: "text", text: "hello world" }],
+        },
     ]
     const mockClient = makeMockClient(mockMsgs)
     const state = makeState([], new Map())
-    state.messageIds.byRawId.set("raw-1", "m00001")
+    state.messageIds.byRawId.set("raw-1", "A001")
     const ctx: ToolFactoryContext = {
         client: mockClient,
         registry: singletonRegistry(state),
@@ -298,7 +315,10 @@ test("acp_status: scope=uncompressed view=messages shows per-message listing", a
         prompts: { reload: () => {} } as any,
     }
     const statusTool = createAcpStatusTool(ctx)
-    const result = await statusTool.execute({ scope: "uncompressed", view: "messages" } as any, { sessionID: SID } as any)
+    const result = await statusTool.execute(
+        { scope: "uncompressed", view: "messages" } as any,
+        { sessionID: SID } as any,
+    )
 
     assert.match(result, /UNCOMPRESSED/)
     assert.match(result, /Sorted by/)
@@ -313,7 +333,7 @@ test("acp_status: scope=uncompressed view=messages with tool filter shows filter
     ]
     const mockClient = makeMockClient(mockMsgs)
     const state = makeState([], new Map())
-    state.messageIds.byRawId.set("raw-1", "m00001")
+    state.messageIds.byRawId.set("raw-1", "A001")
     const ctx: ToolFactoryContext = {
         client: mockClient,
         registry: singletonRegistry(state),
@@ -322,7 +342,10 @@ test("acp_status: scope=uncompressed view=messages with tool filter shows filter
         prompts: { reload: () => {} } as any,
     }
     const statusTool = createAcpStatusTool(ctx)
-    const result = await statusTool.execute({ scope: "uncompressed", view: "messages", tool: "bash" } as any, { sessionID: SID } as any)
+    const result = await statusTool.execute(
+        { scope: "uncompressed", view: "messages", tool: "bash" } as any,
+        { sessionID: SID } as any,
+    )
 
     assert.match(result, /UNCOMPRESSED — bash:/)
 })
@@ -355,7 +378,7 @@ test("acp_status: scope=compressed shows inactive/consumed blocks", async () => 
     )
     const result = await runStatus([1], blocks, { scope: "compressed" })
 
-    assert.match(result, /b2/)
+    assert.match(result, /B002/)
     assert.match(result, /"consumed"/)
     assert.match(result, /\[inactive\]/)
     assert.match(result, /1 active, 1 inactive\/consumed/)
@@ -372,7 +395,7 @@ test("acp_status: scope=compressed marks user-decompressed blocks as inactive", 
     )
     const result = await runStatus([], blocks, { scope: "compressed" })
 
-    assert.match(result, /b5/)
+    assert.match(result, /B005/)
     assert.match(result, /\[inactive\]/)
     assert.match(result, /0 active, 1 inactive\/consumed/)
 })
@@ -381,7 +404,7 @@ test("acp_status: scope=compressed does not add inactive marker to active blocks
     const blocks = blocksMap(makeBlock({ blockId: 1, active: true, topic: "active block" }))
     const result = await runStatus([1], blocks, { scope: "compressed" })
 
-    assert.match(result, /b1/)
+    assert.match(result, /B001/)
     assert.doesNotMatch(result, /\[inactive\]/)
 })
 

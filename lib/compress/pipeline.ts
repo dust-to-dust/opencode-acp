@@ -14,18 +14,21 @@ import { evaluateBatchQuality } from "./quality-gate"
 export interface CompressionSnapshot {
     messages: PruneMessagesState
     stats: SessionStats
+    nudges: SessionState["nudges"]
 }
 
 export function snapshotCompressionState(state: SessionState): CompressionSnapshot {
     return {
         messages: structuredClone(state.prune.messages),
         stats: { ...state.stats },
+        nudges: structuredClone(state.nudges),
     }
 }
 
 export function restoreCompressionState(state: SessionState, snapshot: CompressionSnapshot): void {
     state.prune.messages = structuredClone(snapshot.messages)
     state.stats = { ...snapshot.stats }
+    state.nudges = structuredClone(snapshot.nudges)
 }
 
 interface RunContext {
@@ -94,45 +97,54 @@ export async function finalizeSession(
     applyPendingCompressionDurations(ctx.state)
     await saveSessionState(ctx.state, ctx.logger)
 
-    if (entries.length > 0) {
-        const qualityReport = evaluateBatchQuality(
-            ctx.state,
-            rawMessages,
-            entries,
-            ctx.config,
-            ctx.logger,
-        )
-        for (const failure of qualityReport.failures) {
-            const metrics = Object.fromEntries(failure.result.metrics.map((m) => [m.name, m.value]))
-            ctx.logger.warn("Compression quality gate FAILED", {
-                blockId: failure.blockId,
-                algorithm: ctx.config.qualityGate.algorithm,
-                layer: failure.result.layer,
-                reason: failure.result.reason,
-                ...metrics,
-            })
+    // Saving is the transaction commit. Everything after it is best-effort and
+    // must never make callers roll back only the in-memory copy of committed state.
+    try {
+        if (entries.length > 0) {
+            const qualityReport = evaluateBatchQuality(
+                ctx.state,
+                rawMessages,
+                entries,
+                ctx.config,
+                ctx.logger,
+            )
+            for (const failure of qualityReport.failures) {
+                const metrics = Object.fromEntries(
+                    failure.result.metrics.map((m) => [m.name, m.value]),
+                )
+                ctx.logger.warn("Compression quality gate FAILED", {
+                    blockId: failure.blockId,
+                    algorithm: ctx.config.qualityGate.algorithm,
+                    layer: failure.result.layer,
+                    reason: failure.result.reason,
+                    ...metrics,
+                })
+            }
         }
+
+        const params = getCurrentParams(ctx.state, rawMessages, ctx.logger)
+        const sessionMessageIds = rawMessages
+            .filter((msg) => !isIgnoredUserMessage(msg))
+            .map((msg) => msg.info.id)
+        const contextTokensBefore = getCurrentTokenUsage(ctx.state, rawMessages)
+
+        await sendCompressNotification(
+            ctx.client,
+            ctx.logger,
+            ctx.config,
+            ctx.state,
+            toolCtx.sessionID,
+            entries,
+            batchTopic,
+            sessionMessageIds,
+            params,
+            contextTokensBefore,
+        )
+    } catch (error) {
+        ctx.logger.warn("Post-compression reporting failed", {
+            error: error instanceof Error ? error.message : String(error),
+        })
     }
-
-    const params = getCurrentParams(ctx.state, rawMessages, ctx.logger)
-    const sessionMessageIds = rawMessages
-        .filter((msg) => !isIgnoredUserMessage(msg))
-        .map((msg) => msg.info.id)
-
-    const contextTokensBefore = getCurrentTokenUsage(ctx.state, rawMessages)
-
-    await sendCompressNotification(
-        ctx.client,
-        ctx.logger,
-        ctx.config,
-        ctx.state,
-        toolCtx.sessionID,
-        entries,
-        batchTopic,
-        sessionMessageIds,
-        params,
-        contextTokensBefore,
-    )
 }
 
 /**

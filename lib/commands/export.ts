@@ -19,21 +19,9 @@ import { existsSync } from "fs"
 import { dirname, isAbsolute, join, resolve } from "path"
 import type { Logger } from "../logger"
 import type { PluginConfig } from "../config"
-import type {
-    CompressionBlock,
-    CompressionTier,
-    SessionState,
-    WithParts,
-} from "../state/types"
+import type { CompressionBlock, CompressionTier, SessionState, WithParts } from "../state/types"
 import { sendIgnoredMessage } from "../ui/notification"
-
-const ALL_TIERS: CompressionTier[] = [1, 2, 3]
-
-const TIER_NAMES: Record<number, string> = {
-    1: "Tier 1 — Capture",
-    2: "Tier 2 — Distilled",
-    3: "Tier 3 — Condensed",
-}
+import { formatBlockRef, formatGenerationLabel } from "../message-ids"
 
 export interface ExportCommandContext {
     client: any
@@ -147,7 +135,7 @@ function splitFlag(tok: string): [string, string | undefined] {
 /** @internal exported for tests */
 export function parseTiers(raw: string): Set<CompressionTier> {
     const lower = raw.trim().toLowerCase()
-    if (lower === "all") return new Set<CompressionTier>(ALL_TIERS)
+    if (lower === "all") return new Set<CompressionTier>()
 
     const parts = lower
         .split(",")
@@ -158,15 +146,15 @@ export function parseTiers(raw: string): Set<CompressionTier> {
     for (const part of parts) {
         const digits = part.replace(/^t/i, "")
         const n = Number(digits)
-        if (!Number.isInteger(n) || n < 1 || n > 3) {
+        if (!Number.isInteger(n) || n < 1) {
             throw new Error(
-                `Invalid tier "${part}". Expected t1, t2, t3, a combination (t2,t3), or "all".`,
+                `Invalid generation "${part}". Expected t1, t2, a comma-separated list, or "all".`,
             )
         }
         result.add(n as CompressionTier)
     }
     if (result.size === 0) {
-        throw new Error(`Invalid tier "${raw}". Expected t1, t2, t3, or "all".`)
+        throw new Error(`Invalid generation "${raw}". Expected t1, t2, or "all".`)
     }
     return result
 }
@@ -203,10 +191,7 @@ function collectActiveBlocks(state: SessionState): CompressionBlock[] {
     return blocks
 }
 
-function filterByTier(
-    blocks: CompressionBlock[],
-    tiers: Set<CompressionTier>,
-): CompressionBlock[] {
+function filterByTier(blocks: CompressionBlock[], tiers: Set<CompressionTier>): CompressionBlock[] {
     if (tiers.size === 0) return blocks
     return blocks.filter((b) => tiers.has((b.tier ?? 1) as CompressionTier))
 }
@@ -224,7 +209,9 @@ function tierCounts(blocks: CompressionBlock[]): string {
         const t = (b.tier ?? 1) as CompressionTier
         counts[t] = (counts[t] || 0) + 1
     }
-    return ALL_TIERS.filter((t) => counts[t])
+    return Object.keys(counts)
+        .map(Number)
+        .sort((a, b) => a - b)
         .map((t) => `T${t}: ${counts[t]}`)
         .join(", ")
 }
@@ -243,7 +230,12 @@ export function renderExportMarkdown(params: {
     const out: string[] = []
 
     const tierFilterLabel =
-        tiers.size === 0 ? "all" : ALL_TIERS.filter((t) => tiers.has(t)).map((t) => `T${t}`).join(", ")
+        tiers.size === 0
+            ? "all"
+            : [...tiers]
+                  .sort((a, b) => a - b)
+                  .map((t) => `T${t}`)
+                  .join(", ")
 
     out.push("# ACP Session Export")
     out.push("")
@@ -274,18 +266,21 @@ export function renderExportMarkdown(params: {
         return out.join("\n")
     }
 
-    for (const tier of [3, 2, 1] as CompressionTier[]) {
+    const renderedTiers = [...new Set(blocks.map((block) => block.tier ?? 1))].sort((a, b) => b - a)
+    for (const tier of renderedTiers) {
         const tierBlocks = blocks
             .filter((b) => (b.tier ?? 1) === tier)
             .sort((a, b) => a.blockId - b.blockId)
         if (tierBlocks.length === 0) continue
 
-        out.push(`## ${TIER_NAMES[tier]}`)
+        out.push(`## Generation ${formatGenerationLabel(tier)}`)
         out.push("")
 
         for (const block of tierBlocks) {
             const topic = block.topic || block.batchTopic || "(no topic)"
-            out.push(`### b${block.blockId} — ${topic}`)
+            out.push(
+                `### ${block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1)} — ${topic}`,
+            )
             out.push("")
 
             if (includeMetadata) {
@@ -318,10 +313,7 @@ export function renderExportMarkdown(params: {
  * Main handler invoked by the command hook.
  * @param args raw argument string following `/acp export` (may be empty).
  */
-export async function handleExportCommand(
-    ctx: ExportCommandContext,
-    args: string,
-): Promise<void> {
+export async function handleExportCommand(ctx: ExportCommandContext, args: string): Promise<void> {
     const { client, state, logger, sessionId } = ctx
 
     let options: ExportOptions

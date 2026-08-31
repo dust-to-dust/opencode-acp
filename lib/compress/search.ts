@@ -263,12 +263,12 @@ function buildBoundaryRecoveryHint(context: SearchContext, state: SessionState):
         visibleRefs.sort()
         const first = visibleRefs[0]
         const last = visibleRefs[visibleRefs.length - 1]
-        parts.push(`Current visible: ${first}–${last} (${visibleRefs.length} msgs).`)
+        parts.push(`Current visible: ${first}–${last} (${visibleRefs.length} activities).`)
     }
 
     const blockCount = context.summaryByBlockId.size
     if (blockCount > 0) {
-        parts.push(`${blockCount} active compressed block${blockCount === 1 ? "" : "s"}.`)
+        parts.push(`${blockCount} active checkpoint${blockCount === 1 ? "" : "s"}.`)
     }
 
     if (parts.length === 0) {
@@ -440,7 +440,7 @@ function buildBoundaryLookup(
         if (rawIndex === undefined) {
             continue
         }
-        const blockRef = formatBlockRef(summary.blockId)
+        const blockRef = summary.ref ?? formatBlockRef(summary.blockId, summary.tier ?? 1)
         if (!lookup.has(blockRef)) {
             lookup.set(blockRef, {
                 kind: "compressed-block",
@@ -454,10 +454,10 @@ function buildBoundaryLookup(
     return lookup
 }
 
-const SEARCH_CONTEXT_TOOL_DESCRIPTION = `Search through all compressed block summaries AND visible messages to find relevant content. Use this BEFORE decompressing to find the right block. Returns a hit list with block/message IDs, relevance scores, and previews.
+const SEARCH_CONTEXT_TOOL_DESCRIPTION = `Search active checkpoint summaries to find relevant compressed content. Use this BEFORE decompressing to find the right checkpoint. Returns checkpoint IDs, relevance scores, and previews.
 
 Examples:
-- search_context({ query: "decoder accuracy" }) — find blocks/messages about decoder accuracy
+- search_context({ query: "decoder accuracy" }) — find checkpoints about decoder accuracy
 - search_context({ query: "training loss PPL" }) — find training results
 - search_context({ query: "architecture design", limit: 5 }) — top 5 results`
 
@@ -505,12 +505,6 @@ export function createSearchContextTool(factoryCtx: ToolFactoryContext): ReturnT
                 .number()
                 .optional()
                 .describe("Maximum results to return (default: 10)"),
-            deep: tool.schema
-                .boolean()
-                .optional()
-                .describe(
-                    "If true, also search visible (uncompressed) messages. Slower but more thorough (default: false)",
-                ),
         },
         async execute(args, toolCtx) {
             const ctx = resolveToolContext(factoryCtx, toolCtx.sessionID)
@@ -570,11 +564,11 @@ export function createSearchContextTool(factoryCtx: ToolFactoryContext): ReturnT
 
                 results.push({
                     type: "block",
-                    id: `b${blockId}`,
+                    id: block.ref ?? formatBlockRef(blockId, block.tier ?? 1),
                     relevance,
                     label: block.topic || "(no topic)",
                     preview,
-                    action: `→ decompress(b${blockId}) for full content`,
+                    action: `→ decompress(${block.ref ?? formatBlockRef(blockId, block.tier ?? 1)}) for full content`,
                 })
             }
 

@@ -5,9 +5,9 @@ import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2
 
 const SUMMARY_ID_HASH_LENGTH = 16
 
-const DCP_BLOCK_ID_TAG_REGEX = /(<(?:dcp|acp)-message-id[^>]*>)b\d+(<\/(?:dcp|acp)-message-id>)/g
-// [FIX Bug 28] Regex to strip stale mNNNN refs from compressed summaries
-const DCP_MESSAGE_REF_TAG_REGEX = /<(?:dcp|acp)-message-id[^>]*>m\d+<\/(?:dcp|acp)-message-id>/g
+const DCP_BLOCK_ID_TAG_REGEX =
+    /(<(?:dcp|acp)-message-id[^>]*>)(?:[B-Z]|[A-Z]{2,})\d+(<\/(?:dcp|acp)-message-id>)/gi
+const DCP_MESSAGE_REF_TAG_REGEX = /<(?:dcp|acp)-message-id[^>]*>A\d+<\/(?:dcp|acp)-message-id>/gi
 const DCP_PAIRED_TAG_REGEX = /<(?:dcp|acp)[^>]*>[\s\S]*?<\/(?:dcp|acp)[^>]*>/gi
 const DCP_UNPAIRED_TAG_REGEX = /<\/?(?:dcp|acp)[^>]*>/gi
 
@@ -195,7 +195,7 @@ export const replaceBlockIdsWithBlocked = (text: string): string => {
     return text.replace(DCP_BLOCK_ID_TAG_REGEX, "$1BLOCKED$2")
 }
 
-// [FIX Bug 28] Strip stale mNNNN refs from compressed summaries before injection
+// Strip stale A-generation refs before deterministic reinjection.
 export const stripStaleMessageRefs = (text: string): string => {
     return text.replace(DCP_MESSAGE_REF_TAG_REGEX, "")
 }
@@ -242,7 +242,8 @@ export const dropEmptyMessages = (messages: WithParts[]): number => {
         const isEmpty = parts.every(
             (part) =>
                 part.type === "text" &&
-                ((typeof part.text !== "string" || part.text.trim().length === 0) ||
+                (typeof part.text !== "string" ||
+                    part.text.trim().length === 0 ||
                     (part as { ignored?: boolean }).ignored === true),
         )
         if (isEmpty) {

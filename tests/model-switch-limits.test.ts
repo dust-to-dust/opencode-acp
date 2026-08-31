@@ -23,7 +23,12 @@ import { tmpdir } from "node:os"
 import type { PluginConfig } from "../lib/config"
 import { createChatMessageTransformHandler, createSystemPromptHandler } from "../lib/hooks"
 import { Logger } from "../lib/logger"
-import { SessionStateRegistry, createSessionState, type SessionState, type WithParts } from "../lib/state"
+import {
+    SessionStateRegistry,
+    createSessionState,
+    type SessionState,
+    type WithParts,
+} from "../lib/state"
 import { createTestRegistry } from "./registry-stub"
 
 const SID = "session-model-switch"
@@ -52,12 +57,18 @@ function buildConfig(): PluginConfig {
             summaryBuffer: true,
             maxContextLimit: 5_000_000,
             minContextLimit: 5_000,
+            minNudgeContextPercent: 0,
+            nudgeGrowthTokens: 500_000,
             nudgeFrequency: 5,
             iterationNudgeThreshold: 15,
             nudgeForce: "soft",
             protectedTools: ["task"],
             protectTags: false,
             protectUserMessages: false,
+            minCompressRange: 0,
+            preserveRecentMessages: 1,
+            preserveRecentTokens: 0,
+            preserveLastUserMessage: true,
             emergencyThresholdPercent: EMERGENCY_PERCENT,
         },
         gc: {
@@ -85,15 +96,21 @@ function makeUserMessage(id: string, text: string, modelId: string): WithParts {
     }
 }
 
-function makeAssistantMessage(id: string, text: string, inputTokens: number): WithParts {
+function makeAssistantMessage(
+    id: string,
+    text: string,
+    inputTokens: number,
+    parentID: string,
+    modelId: string,
+): WithParts {
     return {
         info: {
             id,
             sessionID: SID,
             role: "assistant",
             agent: "assistant",
-            parentID: "parent-placeholder",
-            modelID: OLD_MODEL,
+            parentID,
+            modelID: modelId,
             providerID: PROVIDER,
             mode: "normal",
             path: { cwd: "/", root: "/" },
@@ -136,14 +153,6 @@ function createMockPrompts() {
     }
 }
 
-function collectText(messages: WithParts[]): string {
-    return messages
-        .flatMap((m) => (m.parts ?? []))
-        .filter((p) => p.type === "text")
-        .map((p) => (p as { text?: string }).text ?? "")
-        .join("\n")
-}
-
 /**
  * Runs one messages.transform with `currentTokens` of context while the user
  * message names `modelId`. The session state starts with `initialLimit`
@@ -157,7 +166,7 @@ async function runTransform(opts: {
     initialLimit: number
     initialModel?: { providerID: string; modelID: string }
     catalog?: Array<[providerId: string, modelId: string, limit: number]>
-}): Promise<{ text: string; state: SessionState }> {
+}): Promise<SessionState> {
     const tempDir = mkdtempSync(join(tmpdir(), "acp-model-switch-"))
     process.env.XDG_DATA_HOME = tempDir
     process.env.XDG_CONFIG_HOME = tempDir
@@ -166,6 +175,7 @@ async function runTransform(opts: {
         const state = createSessionState()
         state.sessionId = SID
         state.modelContextLimit = opts.initialLimit
+        state.nudges.lastPerMessageNudgeTokens = opts.currentTokens
         // Simulates the identity pair the system hook would have recorded
         // alongside the limit; omitting it simulates a legacy persisted state
         // (saved before the pair existed).
@@ -190,15 +200,20 @@ async function runTransform(opts: {
 
         const messages: WithParts[] = [
             makeUserMessage("msg-u1", "earlier question", opts.modelId),
-            makeAssistantMessage("msg-a1", "earlier answer", 1_000),
+            makeAssistantMessage("msg-a1", "earlier answer", 1_000, "msg-u1", opts.modelId),
             makeUserMessage("msg-u2", "current question", opts.modelId),
+            makeAssistantMessage(
+                "msg-a2",
+                "big answer",
+                opts.currentTokens,
+                "msg-u2",
+                opts.modelId,
+            ),
         ]
-        // Token usage is read from the LAST assistant message with token data.
-        messages.splice(2, 0, makeAssistantMessage("msg-a2", "big answer", opts.currentTokens))
 
         await handler({}, { messages })
 
-        return { text: collectText(messages), state }
+        return state
     } finally {
         rmSync(tempDir, { recursive: true, force: true })
     }
@@ -206,11 +221,11 @@ async function runTransform(opts: {
 
 // ─── Issue #312 scenario: 200K → 1M switch, 50% emergency threshold ─────────
 
-test("model switch to larger window: 26% usage must NOT fire a 50% emergency nudge", async () => {
+test("model switch to larger window: 26% usage must NOT schedule compression at 50%", async () => {
     // 260K tokens on a 1M window = 26%. Against the stale 200K window the
-    // 50% threshold is 100K and the emergency nudge (wrongly) fires.
+    // 50% threshold is 100K and compression would be scheduled incorrectly.
     const currentTokens = 260_000
-    const { text, state } = await runTransform({
+    const state = await runTransform({
         currentTokens,
         modelId: NEW_MODEL,
         initialLimit: OLD_LIMIT,
@@ -218,7 +233,11 @@ test("model switch to larger window: 26% usage must NOT fire a 50% emergency nud
     })
 
     assert.equal(state.modelContextLimit, NEW_LIMIT, "limit must reconcile to the new model")
-    assert.ok(!text.includes("Context limit reached"), "emergency nudge must not fire at 26%")
+    assert.equal(
+        state.nudges.pendingCompression,
+        undefined,
+        "compression must not be scheduled at 26%",
+    )
     assert.equal(state.nudges.lastNudgeShownTokens, undefined, "no nudge baseline recorded")
 })
 
@@ -229,7 +248,7 @@ test("catalog miss + model switch invalidates the stale limit (legacy state)", a
     // the stale 200K window. The #312 false positive is eliminated even when
     // the catalog misses; system.transform refreshes the pair later in this
     // same request.
-    const { text, state } = await runTransform({
+    const state = await runTransform({
         currentTokens: 260_000,
         modelId: NEW_MODEL,
         initialLimit: OLD_LIMIT,
@@ -238,13 +257,17 @@ test("catalog miss + model switch invalidates the stale limit (legacy state)", a
     assert.equal(state.modelContextLimit, undefined, "stale limit must be invalidated")
     assert.equal(state.modelProviderID, PROVIDER)
     assert.equal(state.modelID, NEW_MODEL)
-    assert.ok(!text.includes("Context limit reached"), "no emergency math against unknown window")
+    assert.equal(
+        state.nudges.pendingCompression,
+        undefined,
+        "unknown window must not schedule compression",
+    )
 })
 
 test("catalog miss + identity mismatch invalidates the stale limit", async () => {
     // Same as above, but the state KNOWS its limit belongs to OLD_MODEL — the
     // recorded-identity check (not the legacy heuristic) drives the fix.
-    const { text, state } = await runTransform({
+    const state = await runTransform({
         currentTokens: 260_000,
         modelId: NEW_MODEL,
         initialLimit: OLD_LIMIT,
@@ -253,15 +276,15 @@ test("catalog miss + identity mismatch invalidates the stale limit", async () =>
 
     assert.equal(state.modelContextLimit, undefined)
     assert.equal(state.modelID, NEW_MODEL)
-    assert.ok(!text.includes("Context limit reached"))
+    assert.equal(state.nudges.pendingCompression, undefined)
 })
 
 test("catalog miss + same identity keeps the limit (no needless blindness)", async () => {
     // Catalog misses but the request names the SAME model the limit was
     // recorded for (e.g. fresh instance after failed hydration): the limit is
     // still trusted — percentage math stays enabled instead of blinding
-    // every such turn. 260K on 200K = 130% ≥ 50% → emergency still fires.
-    const { text, state } = await runTransform({
+    // every such turn. 260K on 200K = 130% ≥ 50% → compression is scheduled.
+    const state = await runTransform({
         currentTokens: 260_000,
         modelId: OLD_MODEL,
         initialLimit: OLD_LIMIT,
@@ -269,13 +292,13 @@ test("catalog miss + same identity keeps the limit (no needless blindness)", asy
     })
 
     assert.equal(state.modelContextLimit, OLD_LIMIT, "same-identity limit must be kept")
-    assert.ok(text.includes("critically full"), "130% of 200K still fires the emergency notice")
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
 })
 
-test("model switch to smaller window: emergency fires when actually over threshold", async () => {
-    // 150K tokens on a 200K window = 75% ≥ 50% → must fire. With the stale 1M
+test("model switch to smaller window: compression is scheduled when over threshold", async () => {
+    // 150K tokens on a 200K window = 75% ≥ 50% → must schedule. With the stale 1M
     // window the threshold would be 500K and the emergency would be missed.
-    const { text, state } = await runTransform({
+    const state = await runTransform({
         currentTokens: 150_000,
         modelId: OLD_MODEL,
         initialLimit: NEW_LIMIT,
@@ -283,7 +306,7 @@ test("model switch to smaller window: emergency fires when actually over thresho
     })
 
     assert.equal(state.modelContextLimit, OLD_LIMIT)
-    assert.ok(text.includes("critically full"), "emergency notice must fire at 75% of 200K")
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
 })
 
 // ─── Catalog population ──────────────────────────────────────────────────────
@@ -386,7 +409,11 @@ test("hydrateModelLimitsFromClient tolerates missing and throwing clients", asyn
     assert.equal(await registry.hydrateModelLimitsFromClient({}), 0)
     assert.equal(
         await registry.hydrateModelLimitsFromClient({
-            config: { providers: async () => { throw new Error("offline") } },
+            config: {
+                providers: async () => {
+                    throw new Error("offline")
+                },
+            },
         }),
         0,
     )

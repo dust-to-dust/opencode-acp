@@ -3,6 +3,7 @@ import test from "node:test"
 import { createSearchContextTool } from "../lib/compress/search"
 import type { ToolFactoryContext } from "../lib/compress/types"
 import type { CompressionBlock, PrunedMessageEntry, SessionState } from "../lib/state/types"
+import { formatBlockRef } from "../lib/message-ids"
 import { singletonRegistry } from "./registry-stub"
 
 // --- Factory helpers ---
@@ -10,7 +11,7 @@ import { singletonRegistry } from "./registry-stub"
 const SID = "session-search-context-test"
 
 function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
-    return {
+    const block: CompressionBlock = {
         blockId: 1,
         runId: 1,
         active: true,
@@ -20,8 +21,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "m00001",
-        endId: "m00003",
+        startId: "A001",
+        endId: "A003",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -38,8 +39,11 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         summary: "a summary",
         survivedCount: 0,
         generation: "young",
+        tier: 1,
         ...overrides,
     }
+    block.ref = formatBlockRef(block.blockId, block.tier ?? 1)
+    return block
 }
 
 function makeState(blocks: Map<number, CompressionBlock>): SessionState {
@@ -68,7 +72,7 @@ function makeState(blocks: Map<number, CompressionBlock>): SessionState {
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
         compressionTiming: {} as any,
         toolParameters: new Map(),
-            toolIdList: [],
+        toolIdList: [],
         messageIds: { byRawId: new Map(), byRef: new Map(), nextRef: 1 },
         lastCompaction: 0,
         currentTurn: 0,
@@ -99,26 +103,25 @@ async function runSearch(
     blocks: Map<number, CompressionBlock>,
     query: string,
     limit?: number,
-    deep?: boolean,
 ): Promise<string> {
     const ctx = makeToolContext(blocks)
     const searchTool = createSearchContextTool(ctx)
-    return searchTool.execute({ query, limit, deep }, {} as any)
+    return searchTool.execute({ query, limit }, {} as any)
 }
 
 interface ParsedHit {
-    blockId: number
+    ref: string
     relevance: number
     label: string
 }
 
-const HIT_LINE_REGEX = /📦 \[b(\d+)\] ⭐* \(([\d.]+)\) "(.*?)"/g
+const HIT_LINE_REGEX = /📦 \[([A-Z]+\d{3,})\] ⭐* \(([\d.]+)\) "(.*?)"/g
 
 function parseHits(output: string): ParsedHit[] {
     const hits: ParsedHit[] = []
     for (const m of output.matchAll(HIT_LINE_REGEX)) {
         hits.push({
-            blockId: Number(m[1]),
+            ref: m[1],
             relevance: Number(m[2]),
             label: m[3],
         })
@@ -141,8 +144,9 @@ test("topic match: query matching a block topic returns a result", async () => {
 
     const hits = parseHits(output)
     assert.equal(hits.length, 1, "expected exactly one hit for topic match")
-    assert.equal(hits[0].blockId, 1)
+    assert.equal(hits[0].ref, "B001")
     assert.equal(hits[0].label, "decoder accuracy improvements")
+    assert.match(output, /decompress\(B001\)/)
     // Single topic occurrence → 0.15 relevance.
     assert.equal(hits[0].relevance, 0.15)
 })
@@ -153,6 +157,7 @@ test("summary match: query matching summary text returns a result", async () => 
     const blocks = blocksMap(
         makeBlock({
             blockId: 2,
+            tier: 2,
             topic: "totally unrelated topic",
             summary: "fix the decoder, the decoder was broken, decoder again",
         }),
@@ -162,7 +167,7 @@ test("summary match: query matching summary text returns a result", async () => 
 
     const hits = parseHits(output)
     assert.equal(hits.length, 1, "expected one hit from summary-only match")
-    assert.equal(hits[0].blockId, 2)
+    assert.equal(hits[0].ref, "C002")
     // 3 summary occurrences → min(3 * 0.04, 0.20) = 0.12
     assert.equal(hits[0].relevance, 0.12)
 })
@@ -172,9 +177,9 @@ test("relevance ordering: higher-scoring blocks appear before lower-scoring ones
         // 1 occurrence → 0.15
         makeBlock({ blockId: 1, topic: "alpha", summary: "noise" }),
         // 3 occurrences → min(3 * 0.15, 0.45) = 0.45
-        makeBlock({ blockId: 2, topic: "alpha alpha alpha", summary: "noise" }),
+        makeBlock({ blockId: 2, tier: 2, topic: "alpha alpha alpha", summary: "noise" }),
         // 2 occurrences → min(2 * 0.15, 0.45) = 0.30
-        makeBlock({ blockId: 3, topic: "alpha alpha", summary: "noise" }),
+        makeBlock({ blockId: 3, tier: 26, topic: "alpha alpha", summary: "noise" }),
     )
 
     const output = await runSearch(blocks, "alpha")
@@ -182,11 +187,11 @@ test("relevance ordering: higher-scoring blocks appear before lower-scoring ones
     const hits = parseHits(output)
     assert.equal(hits.length, 3)
     // Descending relevance: 0.45, 0.30, 0.15
-    assert.equal(hits[0].blockId, 2)
+    assert.equal(hits[0].ref, "C002")
     assert.equal(hits[0].relevance, 0.45)
-    assert.equal(hits[1].blockId, 3)
+    assert.equal(hits[1].ref, "AA003")
     assert.equal(hits[1].relevance, 0.3)
-    assert.equal(hits[2].blockId, 1)
+    assert.equal(hits[2].ref, "B001")
     assert.equal(hits[2].relevance, 0.15)
     // Sanity: strictly descending
     assert.ok(hits[0].relevance > hits[1].relevance)
@@ -234,9 +239,7 @@ test("result limit: more than 10 matches return only top 10", async () => {
 })
 
 test("empty results: query matching nothing returns the no-matches message", async () => {
-    const blocks = blocksMap(
-        makeBlock({ blockId: 1, topic: "alpha beta", summary: "gamma delta" }),
-    )
+    const blocks = blocksMap(makeBlock({ blockId: 1, topic: "alpha beta", summary: "gamma delta" }))
 
     const output = await runSearch(blocks, "nonexistent")
 
@@ -282,23 +285,21 @@ test("multi-keyword phrase bonus: phrase query outscores single-keyword query", 
 
 test("inactive blocks are skipped during search", async () => {
     const blocks = blocksMap(
-        makeBlock({ blockId: 1, active: true, topic: "visible match", summary: "x" }),
-        makeBlock({ blockId: 2, active: false, topic: "visible match", summary: "x" }),
+        makeBlock({ blockId: 1, tier: 2, active: true, topic: "visible match", summary: "x" }),
+        makeBlock({ blockId: 2, tier: 3, active: false, topic: "visible match", summary: "x" }),
     )
 
     const output = await runSearch(blocks, "visible")
 
     const hits = parseHits(output)
     assert.equal(hits.length, 1, "only the active block should be searched")
-    assert.equal(hits[0].blockId, 1)
+    assert.equal(hits[0].ref, "C001")
 })
 
 test("custom limit parameter is honored", async () => {
     const blockList: CompressionBlock[] = []
     for (let i = 1; i <= 6; i++) {
-        blockList.push(
-            makeBlock({ blockId: i, topic: "match match match", summary: "x" }),
-        )
+        blockList.push(makeBlock({ blockId: i, topic: "match match match", summary: "x" }))
     }
     const blocks = blocksMap(...blockList)
 

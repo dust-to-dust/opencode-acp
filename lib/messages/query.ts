@@ -4,7 +4,12 @@ import { isMessageWithInfo } from "./shape"
 
 export function isSyntheticMessage(message: WithParts): boolean {
     const id = message?.info?.id
-    return typeof id === "string" && (id.startsWith("msg_dcp_summary_") || id.startsWith("msg_dcp_text_") || id.startsWith("msg_acp_recap_"))
+    return (
+        typeof id === "string" &&
+        (id.startsWith("msg_dcp_summary_") ||
+            id.startsWith("msg_dcp_text_") ||
+            id.startsWith("msg_acp_recap_"))
+    )
 }
 
 export const getLastUserMessage = (
@@ -87,10 +92,25 @@ export const isIgnoredUserMessage = (message: WithParts): boolean => {
     return true
 }
 
-export function isProtectedUserMessage(_config: PluginConfig, message: WithParts): boolean {
+export function isProtectedUserMessage(config: PluginConfig, message: WithParts): boolean {
     if (!isMessageWithInfo(message)) {
         return false
     }
 
-    return false
+    if (message.info.role !== "user" || isIgnoredUserMessage(message)) {
+        return false
+    }
+    if (config.compress.protectUserMessages) {
+        return true
+    }
+    if (!config.compress.protectTags) {
+        return false
+    }
+
+    return (message.parts ?? []).some(
+        (part) =>
+            part.type === "text" &&
+            typeof part.text === "string" &&
+            /<protect>[\s\S]*?<\/protect>/i.test(part.text),
+    )
 }

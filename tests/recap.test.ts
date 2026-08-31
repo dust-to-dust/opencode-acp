@@ -3,12 +3,13 @@ import test from "node:test"
 import { createAcpContextRecapTool } from "../lib/compress/recap"
 import type { ToolFactoryContext } from "../lib/compress/types"
 import type { CompressionBlock, PrunedMessageEntry, SessionState } from "../lib/state/types"
+import { formatBlockRef } from "../lib/message-ids"
 import { singletonRegistry } from "./registry-stub"
 
 const SID = "session-recap-test"
 
 function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
-    return {
+    const block: CompressionBlock = {
         blockId: 1,
         runId: 1,
         active: true,
@@ -18,8 +19,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "m00001",
-        endId: "m00003",
+        startId: "A001",
+        endId: "A003",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -36,8 +37,11 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         summary: "a summary",
         survivedCount: 0,
         generation: "young",
+        tier: 1,
         ...overrides,
     }
+    block.ref = formatBlockRef(block.blockId, block.tier ?? 1)
+    return block
 }
 
 function makeState(activeIds: number[], blocks: Map<number, CompressionBlock>): SessionState {
@@ -66,7 +70,7 @@ function makeState(activeIds: number[], blocks: Map<number, CompressionBlock>): 
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
         compressionTiming: {} as any,
         toolParameters: new Map(),
-            toolIdList: [],
+        toolIdList: [],
         messageIds: { byRawId: new Map(), byRef: new Map(), nextRef: 1 },
         lastCompaction: 0,
         currentTurn: 0,
@@ -111,15 +115,21 @@ test("recap: no active blocks returns message", async () => {
     assert.match(result, /No active compression blocks/)
 })
 
-test("recap: list view shows message count instead of mNNNNN refs", async () => {
+test("recap: list view shows message count instead of activity refs", async () => {
     const blocks = blocksMap(
-        makeBlock({ blockId: 1, effectiveMessageIds: ["a", "b", "c"], summary: "Summary one" }),
+        makeBlock({
+            blockId: 1,
+            tier: 26,
+            effectiveMessageIds: ["a", "b", "c"],
+            summary: "Summary one",
+        }),
     )
     const result = await runRecap([1], blocks)
 
     assert.match(result, /3 messages/)
     assert.match(result, /Summary one/)
-    assert.ok(!/\bm\d{5}\b/.test(result), "list view should not contain mNNNNN refs")
+    assert.match(result, /AA001/)
+    assert.ok(!/\bA\d{3,}\b/.test(result), "list view should not contain activity refs")
 })
 
 test("recap: list view singular form for single message", async () => {
@@ -134,19 +144,21 @@ test("recap: list view singular form for single message", async () => {
 
 test("recap: single block view shows message count in footer", async () => {
     const blocks = blocksMap(
-        makeBlock({ blockId: 1, effectiveMessageIds: ["a", "b", "c", "d"], summary: "Block content" }),
+        makeBlock({
+            blockId: 1,
+            effectiveMessageIds: ["a", "b", "c", "d"],
+            summary: "Block content",
+        }),
     )
     const result = await runRecap([1], blocks, { blockId: 1 })
 
     assert.match(result, /4 messages/)
     assert.match(result, /Block content/)
-    assert.ok(!/\bm\d{5}\b/.test(result), "single block view should not contain mNNNNN refs")
+    assert.ok(!/\bA\d{3,}\b/.test(result), "single block view should not contain activity refs")
 })
 
 test("recap: single block view singular form", async () => {
-    const blocks = blocksMap(
-        makeBlock({ blockId: 1, effectiveMessageIds: ["x"], summary: "Solo" }),
-    )
+    const blocks = blocksMap(makeBlock({ blockId: 1, effectiveMessageIds: ["x"], summary: "Solo" }))
     const result = await runRecap([1], blocks, { blockId: 1 })
 
     assert.match(result, /1 message\b/)
@@ -159,7 +171,10 @@ test("recap: empty effectiveMessageIds shows dash", async () => {
     const result = await runRecap([1], blocks, { blockId: 1 })
 
     assert.match(result, /—/)
-    assert.ok(!/\bm\d{5}\b/.test(result), "should not contain mNNNNN refs even with empty coverage")
+    assert.ok(
+        !/\bA\d{3,}\b/.test(result),
+        "should not contain activity refs even with empty coverage",
+    )
 })
 
 test("recap: nonexistent blockId returns error with active block list", async () => {
@@ -167,14 +182,11 @@ test("recap: nonexistent blockId returns error with active block list", async ()
     const result = await runRecap([1], blocks, { blockId: 99 })
 
     assert.match(result, /not found/)
-    assert.match(result, /b1/)
+    assert.match(result, /B001/)
 })
 
 test("recap: inactive block returns deactivation message", async () => {
-    const blocks = blocksMap(
-        makeBlock({ blockId: 1 }),
-        makeBlock({ blockId: 2, active: false }),
-    )
+    const blocks = blocksMap(makeBlock({ blockId: 1 }), makeBlock({ blockId: 2, active: false }))
     const result = await runRecap([1], blocks, { blockId: 2 })
 
     assert.match(result, /inactive/)
@@ -188,8 +200,5 @@ test("recap: list view truncates long summaries to 200 chars", async () => {
     const result = await runRecap([1], blocks)
 
     assert.ok(result.includes("..."), "truncated summary should end with ellipsis")
-    assert.ok(
-        result.includes("x".repeat(200)),
-        "should contain first 200 chars of summary",
-    )
+    assert.ok(result.includes("x".repeat(200)), "should contain first 200 chars of summary")
 })

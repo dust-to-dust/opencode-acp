@@ -90,8 +90,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test",
         batchTopic: "test",
-        startId: "m00001",
-        endId: "m00003",
+        startId: "A001",
+        endId: "A003",
         anchorMessageId: "raw-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -230,12 +230,12 @@ test("resolveBoundaryIds resolves message IDs correctly", () => {
     const ctx = makeContext([msg1, msg2])
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    state.messageIds.byRawId.set("raw-b", "m00002")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    state.messageIds.byRawId.set("raw-b", "A002")
 
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00002")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A002")
     assert.equal(startReference.kind, "message")
     assert.equal(startReference.messageId, "raw-a")
     assert.equal(startReference.rawIndex, 0)
@@ -253,7 +253,7 @@ test("resolveBoundaryIds resolves block IDs correctly", () => {
     const state = makeState()
     state.prune.messages.blocksById.set(3, block)
 
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "b3", "b3")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "B003", "B003")
     assert.equal(startReference.kind, "compressed-block")
     assert.equal(startReference.blockId, 3)
     assert.equal(startReference.anchorMessageId, "anchor-1")
@@ -263,13 +263,13 @@ test("resolveBoundaryIds resolves block IDs correctly", () => {
 test("resolveBoundaryIds throws on invalid startId format", () => {
     const ctx = makeContext([])
     const state = makeState()
-    assert.throws(() => resolveBoundaryIds(ctx, state, "invalid", "m00001"), /startId is invalid/)
+    assert.throws(() => resolveBoundaryIds(ctx, state, "invalid", "A001"), /startId is invalid/)
 })
 
 test("resolveBoundaryIds throws on unknown message ref", () => {
     const ctx = makeContext([])
     const state = makeState()
-    assert.throws(() => resolveBoundaryIds(ctx, state, "m00099", "m00100"), /not available/)
+    assert.throws(() => resolveBoundaryIds(ctx, state, "A099", "A100"), /not available/)
 })
 
 test("resolveBoundaryIds failure error includes visible range and acp_status pointer", () => {
@@ -278,43 +278,40 @@ test("resolveBoundaryIds failure error includes visible range and acp_status poi
     const ctx = makeContext([msg1, msg2])
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    state.messageIds.byRawId.set("raw-b", "m00002")
-    // m00003 is registered but its message is no longer in context (consumed by a block)
-    state.messageIds.byRef.set("m00003", "raw-c")
-    state.messageIds.byRawId.set("raw-c", "m00003")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    state.messageIds.byRawId.set("raw-b", "A002")
+    // A003 is registered but its activity is no longer in context (consumed by a checkpoint)
+    state.messageIds.byRef.set("A003", "raw-c")
+    state.messageIds.byRawId.set("raw-c", "A003")
 
     assert.throws(
-        () => resolveBoundaryIds(ctx, state, "m00003", "m00003"),
+        () => resolveBoundaryIds(ctx, state, "A003", "A003"),
         (err: Error) => {
             assert.match(err.message, /not available/)
-            assert.match(err.message, /Current visible: m00001–m00002 \(2 msgs\)/)
+            assert.match(err.message, /Current visible: A001–A002 \(2 activities\)/)
             assert.match(err.message, /acp_status\(\)/)
             return true
         },
     )
 })
 
-test("resolveBoundaryIds failure with active blocks mentions block count", () => {
+test("resolveBoundaryIds failure with active checkpoints mentions checkpoint count", () => {
     const msg1 = makeAssistantMessage("raw-a", "first")
     const block = makeBlock({ blockId: 5, anchorMessageId: "raw-a", active: true })
     const blocks = new Map([[5, block]])
     const ctx = makeContext([msg1], blocks)
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    // m00002 is registered but consumed (not in context)
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-b", "m00002")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    // A002 is registered but consumed (not in context)
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-b", "A002")
     state.prune.messages.blocksById.set(5, block)
 
-    assert.throws(
-        () => resolveBoundaryIds(ctx, state, "m00002", "m00002"),
-        /1 active compressed block/,
-    )
+    assert.throws(() => resolveBoundaryIds(ctx, state, "A002", "A002"), /1 active checkpoint/)
 })
 
 test("resolveBoundaryIds clamps out-of-range endId to last visible message", () => {
@@ -323,13 +320,13 @@ test("resolveBoundaryIds clamps out-of-range endId to last visible message", () 
     const ctx = makeContext([msg1, msg2])
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    state.messageIds.byRawId.set("raw-b", "m00002")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    state.messageIds.byRawId.set("raw-b", "A002")
 
-    // Model guessed m00019 but only m00002 exists — should clamp, not fail
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00001", "m00019")
+    // Model guessed A019 but only A002 exists — should clamp, not fail
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A001", "A019")
     assert.equal(startReference.messageId, "raw-a")
     assert.equal(endReference.messageId, "raw-b")
 })
@@ -340,13 +337,13 @@ test("resolveBoundaryIds clamps out-of-range startId to last visible message", (
     const ctx = makeContext([msg1, msg2])
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    state.messageIds.byRawId.set("raw-b", "m00002")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    state.messageIds.byRawId.set("raw-b", "A002")
 
-    // Both out of range — both clamp to m00002
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00019", "m00020")
+    // Both out of range — both clamp to A002
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A019", "A020")
     assert.equal(startReference.messageId, "raw-b")
     assert.equal(endReference.messageId, "raw-b")
 })
@@ -357,18 +354,18 @@ test("resolveBoundaryIds warns via logger when clamping out-of-range boundaries 
     const ctx = makeContext([msg1, msg2])
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    state.messageIds.byRawId.set("raw-b", "m00002")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    state.messageIds.byRawId.set("raw-b", "A002")
 
     const warns: string[] = []
     const logger = { warn: (msg: string) => warns.push(msg) }
 
-    resolveBoundaryIds(ctx, state, "m00001", "m00019", logger)
+    resolveBoundaryIds(ctx, state, "A001", "A019", logger)
 
     assert.equal(warns.length, 1)
-    assert.match(warns[0]!, /compress endId m00019 not available — clamped to m00002/)
+    assert.match(warns[0]!, /compress endId A019 not available — clamped to A002/)
 })
 
 test("resolveBoundaryIds does not warn when boundaries resolve without clamping", () => {
@@ -377,15 +374,15 @@ test("resolveBoundaryIds does not warn when boundaries resolve without clamping"
     const ctx = makeContext([msg1, msg2])
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    state.messageIds.byRawId.set("raw-b", "m00002")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    state.messageIds.byRawId.set("raw-b", "A002")
 
     const warns: string[] = []
     const logger = { warn: (msg: string) => warns.push(msg) }
 
-    resolveBoundaryIds(ctx, state, "m00001", "m00002", logger)
+    resolveBoundaryIds(ctx, state, "A001", "A002", logger)
 
     assert.equal(warns.length, 0)
 })
@@ -396,13 +393,13 @@ test("resolveBoundaryIds auto-swaps reversed boundaries (Bug 34)", () => {
     const ctx = makeContext([msg1, msg2])
 
     const state = makeState()
-    state.messageIds.byRef.set("m00001", "raw-a")
-    state.messageIds.byRef.set("m00002", "raw-b")
-    state.messageIds.byRawId.set("raw-a", "m00001")
-    state.messageIds.byRawId.set("raw-b", "m00002")
+    state.messageIds.byRef.set("A001", "raw-a")
+    state.messageIds.byRef.set("A002", "raw-b")
+    state.messageIds.byRawId.set("raw-a", "A001")
+    state.messageIds.byRawId.set("raw-b", "A002")
 
     // Pass in reversed order: end before start
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "m00002", "m00001")
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "A002", "A001")
     assert.equal(startReference.messageId, "raw-a")
     assert.equal(startReference.rawIndex, 0)
     assert.equal(endReference.messageId, "raw-b")
@@ -424,8 +421,8 @@ test("resolveBoundaryIds auto-swaps reversed block refs", () => {
     state.prune.messages.blocksById.set(1, block1)
     state.prune.messages.blocksById.set(2, block2)
 
-    // Pass reversed: b2 (at index 1) before b1 (at index 0)
-    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "b2", "b1")
+    // Pass reversed: B002 (at index 1) before B001 (at index 0)
+    const { startReference, endReference } = resolveBoundaryIds(ctx, state, "B002", "B001")
     assert.equal(startReference.blockId, 1)
     assert.equal(startReference.rawIndex, 0)
     assert.equal(endReference.blockId, 2)

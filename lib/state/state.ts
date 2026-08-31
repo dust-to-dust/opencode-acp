@@ -8,7 +8,6 @@ import {
 } from "../compress/timing"
 import { loadSessionState, saveSessionState } from "./persistence"
 import { createModelLimitCatalog } from "./model-limits"
-import { rebuildCompressionState } from "./rebuild"
 import {
     isSubAgentSession,
     findLastCompactionTimestamp,
@@ -18,7 +17,6 @@ import {
     loadPruneMessagesState,
     collectTurnNudgeAnchors,
 } from "./utils"
-import { parseMessageRef, formatMessageRef } from "../message-ids"
 
 /**
  * Per-turn state update (compaction detection + turn count). Extracted from the
@@ -134,14 +132,7 @@ export class SessionStateRegistry {
             this.enforceSoftCap()
         }
         try {
-            await ensureSessionInitialized(
-                client,
-                state,
-                sessionId,
-                this.logger,
-                messages,
-                config,
-            )
+            await ensureSessionInitialized(client, state, sessionId, this.logger, messages, config)
         } catch (err: any) {
             this.logger.error("Failed to initialize session state", {
                 error: err.message,
@@ -184,6 +175,7 @@ export function createSessionState(): SessionState {
             shouldInjectThisTurn: undefined,
             compressBaselineSet: false,
             lastProcessedCompressMessageId: undefined,
+            pendingCompression: undefined,
         },
         stats: {
             pruneTokenCounter: 0,
@@ -230,6 +222,7 @@ export function resetSessionState(state: SessionState): void {
         shouldInjectThisTurn: undefined,
         compressBaselineSet: false,
         lastProcessedCompressMessageId: undefined,
+        pendingCompression: undefined,
     }
     state.stats = {
         pruneTokenCounter: 0,
@@ -257,7 +250,7 @@ export async function ensureSessionInitialized(
     sessionId: string,
     logger: Logger,
     messages: WithParts[],
-    config?: PluginConfig,
+    _config?: PluginConfig,
 ): Promise<void> {
     if (state.sessionId === sessionId) {
         return
@@ -275,15 +268,8 @@ export async function ensureSessionInitialized(
 
     const persisted = await loadSessionState(sessionId, logger)
     if (persisted === null) {
-        // Fork recovery: no persisted state for this session. If config is
-        // available, replay historical compress tool invocations to rebuild
-        // pruning state using the current session's message IDs.
-        if (config) {
-            const rebuilt = rebuildCompressionState(state, messages, config, logger)
-            if (rebuilt > 0) {
-                await saveSessionState(state, logger)
-            }
-        }
+        // State schemas are intentionally not migrated or replayed. A session
+        // without current state starts a fresh A-generation context graph.
         return
     }
 
@@ -300,9 +286,11 @@ export async function ensureSessionInitialized(
     state.nudges.lastPerMessageNudgeTokens = persisted.nudges.lastPerMessageNudgeTokens
     state.nudges.lastNudgeShownTokens = persisted.nudges.lastNudgeShownTokens
     state.nudges.lastToolOutputNudgeTokens = persisted.nudges.lastToolOutputNudgeTokens
-    state.nudges.lastTier2NudgeTokens = persisted.nudges.lastTier2NudgeTokens ?? persisted.nudges.lastTierNudgeTokens
+    state.nudges.lastTier2NudgeTokens =
+        persisted.nudges.lastTier2NudgeTokens ?? persisted.nudges.lastTierNudgeTokens
     state.nudges.lastTier3NudgeTokens = persisted.nudges.lastTier3NudgeTokens
     state.nudges.compressBaselineSet = persisted.nudges.compressBaselineSet ?? false
+    state.nudges.pendingCompression = persisted.nudges.pendingCompression
     state.stats = {
         pruneTokenCounter: persisted.stats?.pruneTokenCounter || 0,
         totalPruneTokens: persisted.stats?.totalPruneTokens || 0,
@@ -320,18 +308,6 @@ export async function ensureSessionInitialized(
             if (rawId.startsWith("msg_dcp_summary_") || rawId.startsWith("msg_dcp_text_")) {
                 state.messageIds.byRawId.delete(rawId)
                 state.messageIds.byRef.delete(ref)
-            }
-        }
-        // Migrate 4-digit refs (m0001) to 5-digit (m00001) for msgid expansion
-        for (const [rawId, oldRef] of state.messageIds.byRawId) {
-            const parsed = parseMessageRef(oldRef)
-            if (parsed !== null) {
-                const newRef = formatMessageRef(parsed)
-                if (newRef !== oldRef) {
-                    state.messageIds.byRawId.set(rawId, newRef)
-                    state.messageIds.byRef.delete(oldRef)
-                    state.messageIds.byRef.set(newRef, rawId)
-                }
             }
         }
     }

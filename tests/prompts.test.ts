@@ -101,16 +101,22 @@ test("system prompt overrides handle reminder tags safely", async (t) => {
     })
 })
 
-test("prompt store exposes bundled range-mode compress prompt", () => {
+test("prompt store exposes bundled checkpoint-selection prompt", () => {
     const fixture = createPromptStoreFixture()
 
     try {
         const runtimePrompts = fixture.store.getRuntimePrompts()
 
-        assert.match(runtimePrompts.compressRange, /Collapse a range in the conversation/i)
-        assert.match(runtimePrompts.compressRange, /COMPRESSED BLOCK PLACEHOLDERS/)
-        assert.match(runtimePrompts.compressRange, /BATCHING/)
-        assert.match(runtimePrompts.compressRange, /content` array/)
+        assert.match(
+            runtimePrompts.compressRange,
+            /Select which eligible context blocks remain verbatim/i,
+        )
+        assert.match(runtimePrompts.compressRange, /candidate IDs in keep/i)
+        assert.match(
+            runtimePrompts.compressRange,
+            /omitted from keep are replaced by one checkpoint/i,
+        )
+        assert.match(runtimePrompts.compressRange, /confirmedFacts and nextSteps/)
     } finally {
         fixture.cleanup()
     }

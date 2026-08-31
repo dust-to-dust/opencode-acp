@@ -1,7 +1,11 @@
 import type { SessionState, WithParts } from "../../state"
 import type { PluginConfig, CompressConfig, CompressModelOverrides } from "../../config"
 import { messageContainsProtectedTool } from "../../compress/protected-content"
-import { isToolNameProtected, getFilePathsFromParameters, isFilePathProtected } from "../../protected-patterns"
+import {
+    isToolNameProtected,
+    getFilePathsFromParameters,
+    isFilePathProtected,
+} from "../../protected-patterns"
 import {
     appendGuidanceToDcpTag,
     buildCompressedBlockGuidance,
@@ -24,6 +28,7 @@ import {
 import { getLastUserMessage, isIgnoredUserMessage, isSyntheticMessage } from "../query"
 import { getCurrentTokenUsage } from "../../token-utils"
 import { getActiveSummaryTokenUsage } from "../../state/utils"
+import { formatBlockRef } from "../../message-ids"
 
 export interface LastUserModelContext {
     providerId: string | undefined
@@ -166,10 +171,7 @@ export function isContextOverLimits(
     messages: WithParts[],
 ) {
     const summaryTokenExtension = config.compress.summaryBuffer
-        ? getActiveSummaryTokenUsage(
-              state,
-              new Set(messages.map((m) => m.info.id)),
-          )
+        ? getActiveSummaryTokenUsage(state, new Set(messages.map((m) => m.info.id)))
         : 0
     const resolvedMaxContextLimit = resolveContextTokenLimit(
         config,
@@ -220,10 +222,7 @@ export interface NudgeDecision {
     tipsVariant: TipsVariant | null
 }
 
-import {
-    ensureBuiltinTriggerPolicyRegistered,
-    getDefaultTriggerPolicy,
-} from "./policy"
+import { ensureBuiltinTriggerPolicyRegistered, getDefaultTriggerPolicy } from "./policy"
 ensureBuiltinTriggerPolicyRegistered()
 
 export function computeShouldNudge(params: {
@@ -297,7 +296,7 @@ export function resolveCompressOverrides(
 export function resolveMinNudgeContextPercent(
     config: PluginConfig,
     providerId?: string,
-    modelId?: string
+    modelId?: string,
 ): number | undefined {
     const overrides = resolveCompressOverrides(config, providerId, modelId)
     if (overrides.minNudgeContextPercent !== undefined) {
@@ -317,7 +316,7 @@ export function resolveMinNudgeFloorTokens(
     config: PluginConfig,
     modelContextLimit: number | undefined,
     providerId?: string,
-    modelId?: string
+    modelId?: string,
 ): number | undefined {
     if (modelContextLimit === undefined) {
         return undefined
@@ -336,7 +335,7 @@ export function resolveMinNudgeFloorTokens(
  *   inside resolveContextTokenLimit, so blanket-applying it here would let the
  *   flat map override the nested value (wrong precedence).
  */
-const OVERRIDE_BLANKET_APPLY_EXCLUDE = new Set< keyof CompressModelOverrides >(["maxContextLimit"])
+const OVERRIDE_BLANKET_APPLY_EXCLUDE = new Set<keyof CompressModelOverrides>(["maxContextLimit"])
 
 /**
  * Build the effective PluginConfig for the active provider/model: a shallow
@@ -827,7 +826,15 @@ export function buildCompressibleRanges(
             lastUserRefIdx.length = 0
             lastUserRefIdx.push(msgInfo.length)
         }
-        msgInfo.push({ ref, refNum: rn, tokens, effectiveTokens: 0, meaningful: hasMeaningfulPart, isTool, isUser: msg.info.role === "user" })
+        msgInfo.push({
+            ref,
+            refNum: rn,
+            tokens,
+            effectiveTokens: 0,
+            meaningful: hasMeaningfulPart,
+            isTool,
+            isUser: msg.info.role === "user",
+        })
     }
 
     const lastUserIdx = lastUserRefIdx.length > 0 ? lastUserRefIdx[0] : -1
@@ -988,9 +995,7 @@ export function filterRecommendedRanges(
         return effective > 0 && effective >= floor
     })
 
-    const result = kept.map((r, i) =>
-        i === kept.length - 1 ? { ...r, dangerous: true } : r,
-    )
+    const result = kept.map((r, i) => (i === kept.length - 1 ? { ...r, dangerous: true } : r))
 
     log?.("filterRecommendedRanges: effective-token floor applied", {
         inputRanges: compressible.length,
@@ -1034,10 +1039,11 @@ export function formatCompressibleRanges(
         if (ranges.length === 0) return ""
         const lines = ranges.map((r) => {
             const eff = r.effectiveTokens ?? r.tokens
-            const size = eff < r.tokens
-                ? `${fmt(eff)} effective of ${fmt(r.tokens)}`
-                : fmt(r.tokens)
-            const suffix = r.dangerous ? "  ⚠️ NOT recommended unless you are certain. If you MUST compress this, pass `dangerous: true`." : ""
+            const size =
+                eff < r.tokens ? `${fmt(eff)} effective of ${fmt(r.tokens)}` : fmt(r.tokens)
+            const suffix = r.dangerous
+                ? "  ⚠️ NOT recommended unless you are certain. If you MUST compress this, pass `dangerous: true`."
+                : ""
             return `  ${r.startRef}–${r.endRef}  ${r.count} msgs  ${size} [tool ${r.toolPct}% | text ${r.textPct}%]${suffix}`
         })
         return `Compressible ranges (oldest first):\n${lines.join("\n")}`
@@ -1106,7 +1112,10 @@ export function formatCompressibleRanges(
     }
 
     const lines = merged.map((e) => {
-        const suffix = e.dangerous && e.compressibleTokens > 0 ? "  ⚠️ NOT recommended unless you are certain. If you MUST compress this, pass `dangerous: true`." : ""
+        const suffix =
+            e.dangerous && e.compressibleTokens > 0
+                ? "  ⚠️ NOT recommended unless you are certain. If you MUST compress this, pass `dangerous: true`."
+                : ""
 
         if (e.protectedTokens > 0 && e.compressibleTokens === 0) {
             return `  ${e.startRef}–${e.endRef}  ${e.count} msgs  ${fmt(e.tokens)} [PROTECTED: ${e.protectedTools.join(", ")} — not compressible]${suffix}`
@@ -1147,13 +1156,26 @@ export function computeProtectedRefs(
 
     const result = new Set<string>()
 
+    const blockRefByCarrierId = new Map<string, string>()
+    for (const blockId of state.prune.messages.activeBlockIds) {
+        const block = state.prune.messages.blocksById.get(blockId)
+        if (!block?.active || !block.compressMessageId) continue
+        blockRefByCarrierId.set(
+            block.compressMessageId,
+            block.ref ?? formatBlockRef(block.blockId, block.tier ?? 1),
+        )
+    }
+
     const visible: { ref: string; tokens: number; isUser: boolean }[] = []
+    const visibleIndexByRef = new Map<string, number>()
     for (const msg of messages) {
         if (isSyntheticMessage(msg)) continue
         if (isIgnoredUserMessage(msg)) continue
-        const ref = state.messageIds.byRawId.get(msg.info.id)
+        const compressionEntry = state.prune.messages.byMessageId.get(msg.info.id)
+        if ((compressionEntry?.activeBlockIds.length ?? 0) > 0) continue
+        const ref =
+            blockRefByCarrierId.get(msg.info.id) ?? state.messageIds.byRawId.get(msg.info.id)
         if (!ref) continue
-        if (state.prune.messages.byMessageId.has(msg.info.id)) continue
 
         let tokens = 0
         for (const part of msg.parts || []) {
@@ -1163,7 +1185,15 @@ export function computeProtectedRefs(
                 tokens += Math.round(JSON.stringify(part).length / 4)
             }
         }
-        visible.push({ ref, tokens, isUser: msg.info.role === "user" })
+        const existingIndex = visibleIndexByRef.get(ref)
+        if (existingIndex === undefined) {
+            visibleIndexByRef.set(ref, visible.length)
+            visible.push({ ref, tokens, isUser: msg.info.role === "user" })
+        } else {
+            const existing = visible[existingIndex]!
+            existing.tokens += tokens
+            existing.isUser ||= msg.info.role === "user"
+        }
     }
 
     if (preserveN > 0) {
@@ -1195,7 +1225,5 @@ export function excludeProtectedRanges(
     protectedRefs: Set<string>,
 ): CompressibleRange[] {
     if (protectedRefs.size === 0) return ranges
-    return ranges.filter(
-        (r) => !protectedRefs.has(r.startRef) && !protectedRefs.has(r.endRef),
-    )
+    return ranges.filter((r) => !protectedRefs.has(r.startRef) && !protectedRefs.has(r.endRef))
 }

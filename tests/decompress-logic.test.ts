@@ -14,11 +14,12 @@ import {
 } from "../lib/compress/decompress-logic"
 import type { CompressionBlock, PruneMessagesState, WithParts } from "../lib/state/types"
 import type { CompressionTarget } from "../lib/commands/compression-targets"
+import { formatBlockRef } from "../lib/message-ids"
 
 // --- Factory helpers ---
 
 function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock {
-    return {
+    const block: CompressionBlock = {
         blockId: 1,
         runId: 1,
         active: true,
@@ -28,8 +29,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test",
         batchTopic: "test",
-        startId: "m00001",
-        endId: "m00003",
+        startId: "A001",
+        endId: "A003",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -46,8 +47,11 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         summary: "A summary.",
         survivedCount: 0,
         generation: "young",
+        tier: 1,
         ...overrides,
     }
+    block.ref = formatBlockRef(block.blockId, block.tier ?? 1)
+    return block
 }
 
 function makeMessagesState(overrides: Partial<PruneMessagesState> = {}): PruneMessagesState {
@@ -77,8 +81,8 @@ function makeTarget(overrides: Partial<CompressionTarget> = {}): CompressionTarg
 
 // --- parseBlockIdArg ---
 
-test("parseBlockIdArg returns block ID for 'b1' format", () => {
-    assert.equal(parseBlockIdArg("b1"), 1)
+test("parseBlockIdArg returns block ID for 'B001' checkpoint format", () => {
+    assert.equal(parseBlockIdArg("B001"), 1)
 })
 
 test("parseBlockIdArg returns block ID for bare number '5'", () => {
@@ -97,20 +101,20 @@ test("parseBlockIdArg returns null for empty string", () => {
     assert.equal(parseBlockIdArg(""), null)
 })
 
-test("parseBlockIdArg returns null for 'b-1'", () => {
-    assert.equal(parseBlockIdArg("b-1"), null)
+test("parseBlockIdArg returns null for malformed 'B-001'", () => {
+    assert.equal(parseBlockIdArg("B-001"), null)
 })
 
-test("parseBlockIdArg returns null for 'b0'", () => {
-    assert.equal(parseBlockIdArg("b0"), null)
+test("parseBlockIdArg returns null for an activity ref", () => {
+    assert.equal(parseBlockIdArg("A001"), null)
 })
 
-test("parseBlockIdArg is case insensitive: 'B3' returns 3", () => {
-    assert.equal(parseBlockIdArg("B3"), 3)
+test("parseBlockIdArg is case insensitive: 'c003' returns 3", () => {
+    assert.equal(parseBlockIdArg("c003"), 3)
 })
 
 test("parseBlockIdArg trims whitespace", () => {
-    assert.equal(parseBlockIdArg("  b7  "), 7)
+    assert.equal(parseBlockIdArg("  AA007  "), 7)
 })
 
 test("parseBlockIdArg returns null for negative number '-1'", () => {
@@ -363,9 +367,7 @@ test("buildRestoredContentPreview returns empty string when no messages restored
 
 test("buildRestoredContentPreview returns preview with role and truncated content", () => {
     const ms = makeMessagesState({
-        byMessageId: new Map([
-            ["msg-a", { tokenCount: 50, allBlockIds: [1], activeBlockIds: [] }],
-        ]),
+        byMessageId: new Map([["msg-a", { tokenCount: 50, allBlockIds: [1], activeBlockIds: [] }]]),
     })
     const before = new Map([["msg-a", 50]])
     const messages: WithParts[] = [
@@ -379,9 +381,7 @@ test("buildRestoredContentPreview returns preview with role and truncated conten
 test("buildRestoredContentPreview truncates individual messages at ~200 chars", () => {
     const longText = "A".repeat(300)
     const ms = makeMessagesState({
-        byMessageId: new Map([
-            ["msg-a", { tokenCount: 50, allBlockIds: [1], activeBlockIds: [] }],
-        ]),
+        byMessageId: new Map([["msg-a", { tokenCount: 50, allBlockIds: [1], activeBlockIds: [] }]]),
     })
     const before = new Map([["msg-a", 50]])
     const messages: WithParts[] = [
@@ -418,14 +418,10 @@ test("buildRestoredContentPreview caps total output at approximately 2000 chars"
 
 test("buildRestoredContentPreview handles messages with no parts", () => {
     const ms = makeMessagesState({
-        byMessageId: new Map([
-            ["msg-a", { tokenCount: 50, allBlockIds: [1], activeBlockIds: [] }],
-        ]),
+        byMessageId: new Map([["msg-a", { tokenCount: 50, allBlockIds: [1], activeBlockIds: [] }]]),
     })
     const before = new Map([["msg-a", 50]])
-    const messages: WithParts[] = [
-        { info: { id: "msg-a", role: "user" } as any, parts: [] as any },
-    ]
+    const messages: WithParts[] = [{ info: { id: "msg-a", role: "user" } as any, parts: [] as any }]
     const result = buildRestoredContentPreview(messages, before, ms)
     assert.ok(result.includes("[user]"))
 })
@@ -477,7 +473,10 @@ test("findActiveBlocksOverlappingMessages returns multiple matched blocks sorted
         ]),
     })
     const result = findActiveBlocksOverlappingMessages(ms, new Set(["msg-a", "msg-b", "msg-c"]))
-    assert.deepEqual(result.map((b) => b.blockId), [1, 2, 3])
+    assert.deepEqual(
+        result.map((b) => b.blockId),
+        [1, 2, 3],
+    )
 })
 
 test("findActiveBlocksOverlappingMessages dedupes when block matches multiple messages in set", () => {
@@ -517,7 +516,10 @@ test("findActiveBlocksOverlappingMessages handles nested blocks (child effective
         ]),
     })
     const result = findActiveBlocksOverlappingMessages(ms, new Set(["msg-c"]))
-    assert.deepEqual(result.map((b) => b.blockId), [2])
+    assert.deepEqual(
+        result.map((b) => b.blockId),
+        [2],
+    )
 })
 
 test("findActiveBlocksOverlappingMessages returns both ancestor and child when range covers ancestor messages", () => {
@@ -537,43 +539,46 @@ test("findActiveBlocksOverlappingMessages returns both ancestor and child when r
         ]),
     })
     const result = findActiveBlocksOverlappingMessages(ms, new Set(["msg-a"]))
-    assert.deepEqual(result.map((b) => b.blockId), [1, 2])
+    assert.deepEqual(
+        result.map((b) => b.blockId),
+        [1, 2],
+    )
 })
 
 // --- resolveDecompressMode dispatch tests ---
 
 test("resolveDecompressMode: blockId only → block mode", () => {
-    const result = resolveDecompressMode({ blockId: "b3" })
+    const result = resolveDecompressMode({ blockId: "C003" })
     assert.equal(result.ok, true)
     if (result.ok) assert.equal(result.mode, "block")
 })
 
 test("resolveDecompressMode: startId + endId → range mode", () => {
-    const result = resolveDecompressMode({ startId: "m001", endId: "m005" })
+    const result = resolveDecompressMode({ startId: "A001", endId: "A005" })
     assert.equal(result.ok, true)
     if (result.ok) assert.equal(result.mode, "range")
 })
 
 test("resolveDecompressMode: mixed blockId + startId → error", () => {
-    const result = resolveDecompressMode({ blockId: "b3", startId: "m001", endId: "m005" })
+    const result = resolveDecompressMode({ blockId: "C003", startId: "A001", endId: "A005" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Cannot specify both/)
 })
 
 test("resolveDecompressMode: mixed blockId + endId only → error", () => {
-    const result = resolveDecompressMode({ blockId: "b3", endId: "m005" })
+    const result = resolveDecompressMode({ blockId: "C003", endId: "A005" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Cannot specify both/)
 })
 
 test("resolveDecompressMode: only startId (missing endId) → error", () => {
-    const result = resolveDecompressMode({ startId: "m001" })
+    const result = resolveDecompressMode({ startId: "A001" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Must specify either/)
 })
 
 test("resolveDecompressMode: only endId (missing startId) → error", () => {
-    const result = resolveDecompressMode({ endId: "m005" })
+    const result = resolveDecompressMode({ endId: "A005" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Must specify either/)
 })
