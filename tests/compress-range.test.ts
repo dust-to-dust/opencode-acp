@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdirSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { PluginConfig } from "../lib/config"
@@ -274,7 +274,9 @@ test("keep-all restores pending state when persistence fails", async () => {
     state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
     state.nudges.lastPerMessageNudgeTokens = 100_000
     const previousDataHome = process.env.XDG_DATA_HOME
-    process.env.XDG_DATA_HOME = "/dev/null"
+    const invalidDataHome = join(dataHome, `not-a-directory-${sessionID}`)
+    writeFileSync(invalidDataHome, "")
+    process.env.XDG_DATA_HOME = invalidDataHome
 
     try {
         await assert.rejects(

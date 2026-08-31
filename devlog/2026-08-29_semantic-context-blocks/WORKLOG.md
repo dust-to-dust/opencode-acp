@@ -3,7 +3,7 @@
 - Task ID: `2026-08-29_semantic-context-blocks`
 - Home Repo: `opencode-acp`
 - Status: Completed
-- Updated: 2026-08-29
+- Updated: 2026-08-31
 
 ## 1. Summary
 
@@ -19,6 +19,7 @@
 | Commit  | Description                     |
 | ------- | ------------------------------- |
 | Pending | Semantic context block protocol |
+| Pending | Cross-platform validation fixes |
 
 ### Key Files
 
@@ -62,6 +63,8 @@ bash -n scripts/e2e/run-e2e.sh
 - **PASS**: changed-file Prettier and `git diff --check`.
 - **PASS**: E2E script parsing checks. Docker E2E was not run because it requires a fresh build, and the user explicitly prohibited constructing release artifacts.
 - **NOT RUN**: `npm run build`, per explicit user instruction.
+- **PASS (2026-08-31)**: 806 tests on Node 20/Windows using an explicit tracked-file list because `cmd.exe` does not expand the package script's test glob.
+- **PASS (2026-08-31)**: package-root `jsonc-parser` import and portable temp paths removed Node 20 and Windows-only validation failures.
 
 ## 5. Risk Assessment & Rollback
 

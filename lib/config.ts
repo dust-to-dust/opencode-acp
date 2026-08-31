@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs"
 import { join, dirname } from "path"
 import { homedir } from "os"
-import { parse } from "jsonc-parser/lib/esm/main.js"
+import { parse } from "jsonc-parser"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { VALID_CONFIG_KEYS, getInvalidConfigKeys, validateConfigTypes, type ValidationError } from "./config-validation"
 import type { LogLevel } from "./logger"
