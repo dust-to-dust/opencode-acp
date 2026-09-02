@@ -45,10 +45,8 @@ test("disabled logger: ERROR and WARN still write to the daily log", async () =>
 
         const lines = readLines(logFile)
         assert.equal(lines.length, 2)
-        // component token is environment-dependent (bundle filename in production,
-        // runner frame in tests) — assert structure, not the exact component name.
-        assert.match(lines[0], /\bERROR\s+[\w:/.]+: state load failed \| error=EACCES \| v=(dev|\d+\.\d+\.\d+)/)
-        assert.match(lines[1], /\bWARN\s+[\w:/.]+: quality gate FAILED \| blockId=3 \| v=(dev|\d+\.\d+\.\d+)/)
+        assert.match(lines[0], /\bERROR\s+state load failed \| error=EACCES$/)
+        assert.match(lines[1], /\bWARN\s+quality gate FAILED \| blockId=3$/)
     })
 })
 
@@ -65,7 +63,7 @@ test("disabled logger: no log file exists before any error/warn", async () => {
         await logger.warn("now a warn")
         const lines = readLines(logFile)
         assert.equal(lines.length, 1)
-        assert.match(lines[0], /\bWARN\s+[\w:/.]+: now a warn \| v=(dev|\d+\.\d+\.\d+)/)
+        assert.match(lines[0], /\bWARN\s+now a warn$/)
     })
 })
 
@@ -81,14 +79,14 @@ test("enabled logger: all levels write to the daily log", async () => {
 
         const lines = readLines(logFile)
         assert.equal(lines.length, 4)
-        assert.match(lines[0], /\bDEBUG\s+[\w:/.]+: debug event \| v=(dev|\d+\.\d+\.\d+)/)
-        assert.match(lines[1], /\bINFO\s+[\w:/.]+: info event \| v=(dev|\d+\.\d+\.\d+)/)
-        assert.match(lines[2], /\bWARN\s+[\w:/.]+: warn event \| reason=phantom \| v=(dev|\d+\.\d+\.\d+)/)
-        assert.match(lines[3], /\bERROR\s+[\w:/.]+: error event \| v=(dev|\d+\.\d+\.\d+)/)
+        assert.match(lines[0], /\bDEBUG\s+debug event$/)
+        assert.match(lines[1], /\bINFO\s+info event$/)
+        assert.match(lines[2], /\bWARN\s+warn event \| reason=phantom$/)
+        assert.match(lines[3], /\bERROR\s+error event$/)
     })
 })
 
-test("log line format: timestamp, padded level, component, message, version", async () => {
+test("log line format: second timestamp, padded level, and message", async () => {
     const { configHome, logFile } = setup()
     await withConfigHome(configHome, async () => {
         const logger = new Logger(false)
@@ -96,11 +94,22 @@ test("log line format: timestamp, padded level, component, message, version", as
         const [line] = readLines(logFile)
         assert.ok(line, "expected one log line")
 
-        const [ts, level, component] = line.split(" ")
-        assert.match(ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
+        const [ts, level] = line.split(" ")
+        assert.match(ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)
         assert.equal(level, "ERROR")
-        assert.match(component, /^[\w:/.]+:$/)
-        assert.match(line, /: boom \| v=(dev|\d+\.\d+\.\d+)$/)
+        assert.match(line, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} ERROR boom$/)
+    })
+})
+
+test("multiline nudge diagnostics stay complete on one log line", async () => {
+    const { configHome, logFile } = setup()
+    await withConfigHome(configHome, async () => {
+        const logger = new Logger(true)
+        await logger.debug("[ACP Debug] Nudge injected:first line\nsecond line")
+
+        const lines = readLines(logFile)
+        assert.equal(lines.length, 1)
+        assert.match(lines[0]!, /DEBUG \[ACP Debug\] Nudge injected:first line\\nsecond line$/)
     })
 })
 
@@ -116,7 +125,7 @@ test("explicit info level: INFO/WARN/ERROR write, DEBUG gated (default-on loggin
 
         const lines = readLines(logFile)
         assert.equal(lines.length, 3)
-        assert.match(lines[0], /\bINFO\s+[\w:/.]+: decision event \| tier=1 \| v=/)
+        assert.match(lines[0], /\bINFO\s+decision event \| tier=1$/)
         assert.match(lines[1], /\bWARN\s+/)
         assert.match(lines[2], /\bERROR\s+/)
     })
@@ -142,7 +151,7 @@ test("error level: only ERROR writes", async () => {
 
         const lines = readLines(logFile)
         assert.equal(lines.length, 1)
-        assert.match(lines[0], /\bERROR\s+[\w:/.]+: kept \| v=/)
+        assert.match(lines[0], /\bERROR\s+kept$/)
     })
 })
 

@@ -29,8 +29,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test",
         batchTopic: "test",
-        startId: "A001",
-        endId: "A003",
+        startId: "A1",
+        endId: "A3",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -81,8 +81,12 @@ function makeTarget(overrides: Partial<CompressionTarget> = {}): CompressionTarg
 
 // --- parseBlockIdArg ---
 
-test("parseBlockIdArg returns block ID for 'B001' checkpoint format", () => {
-    assert.equal(parseBlockIdArg("B001"), 1)
+test("parseBlockIdArg returns block ID for canonical 'B1' checkpoint format", () => {
+    assert.equal(parseBlockIdArg("B1"), 1)
+})
+
+test("parseBlockIdArg rejects padded checkpoint refs from old sessions", () => {
+    assert.equal(parseBlockIdArg("B001"), null)
 })
 
 test("parseBlockIdArg returns block ID for bare number '5'", () => {
@@ -109,12 +113,12 @@ test("parseBlockIdArg returns null for an activity ref", () => {
     assert.equal(parseBlockIdArg("A001"), null)
 })
 
-test("parseBlockIdArg is case insensitive: 'c003' returns 3", () => {
-    assert.equal(parseBlockIdArg("c003"), 3)
+test("parseBlockIdArg is case insensitive: 'c3' returns 3", () => {
+    assert.equal(parseBlockIdArg("c3"), 3)
 })
 
 test("parseBlockIdArg trims whitespace", () => {
-    assert.equal(parseBlockIdArg("  AA007  "), 7)
+    assert.equal(parseBlockIdArg("  AA7  "), 7)
 })
 
 test("parseBlockIdArg returns null for negative number '-1'", () => {
@@ -548,37 +552,37 @@ test("findActiveBlocksOverlappingMessages returns both ancestor and child when r
 // --- resolveDecompressMode dispatch tests ---
 
 test("resolveDecompressMode: blockId only → block mode", () => {
-    const result = resolveDecompressMode({ blockId: "C003" })
+    const result = resolveDecompressMode({ blockId: "C3" })
     assert.equal(result.ok, true)
     if (result.ok) assert.equal(result.mode, "block")
 })
 
 test("resolveDecompressMode: startId + endId → range mode", () => {
-    const result = resolveDecompressMode({ startId: "A001", endId: "A005" })
+    const result = resolveDecompressMode({ startId: "A1", endId: "A5" })
     assert.equal(result.ok, true)
     if (result.ok) assert.equal(result.mode, "range")
 })
 
 test("resolveDecompressMode: mixed blockId + startId → error", () => {
-    const result = resolveDecompressMode({ blockId: "C003", startId: "A001", endId: "A005" })
+    const result = resolveDecompressMode({ blockId: "C3", startId: "A1", endId: "A5" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Cannot specify both/)
 })
 
 test("resolveDecompressMode: mixed blockId + endId only → error", () => {
-    const result = resolveDecompressMode({ blockId: "C003", endId: "A005" })
+    const result = resolveDecompressMode({ blockId: "C3", endId: "A5" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Cannot specify both/)
 })
 
 test("resolveDecompressMode: only startId (missing endId) → error", () => {
-    const result = resolveDecompressMode({ startId: "A001" })
+    const result = resolveDecompressMode({ startId: "A1" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Must specify either/)
 })
 
 test("resolveDecompressMode: only endId (missing startId) → error", () => {
-    const result = resolveDecompressMode({ endId: "A005" })
+    const result = resolveDecompressMode({ endId: "A5" })
     assert.equal(result.ok, false)
     if (!result.ok) assert.match(result.error, /Must specify either/)
 })

@@ -38,10 +38,8 @@ interface PromptDefinition {
 }
 
 interface PromptPaths {
-    defaultsDir: string
-    globalOverridesDir: string
-    configDirOverridesDir: string | null
-    projectOverridesDir: string | null
+    globalDir: string
+    projectDir: string | null
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -123,18 +121,12 @@ function createBundledRuntimePrompts(): RuntimePrompts {
 }
 
 function resolvePromptPaths(workingDirectory: string): PromptPaths {
-    const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
-    const globalRoot = join(configHome, "opencode", "acp-prompts")
-    const configDir = process.env.OPENCODE_CONFIG_DIR
-        ? join(process.env.OPENCODE_CONFIG_DIR, "acp-prompts", "overrides")
-        : null
+    const globalRoot = join(homedir(), ".config", "opencode", "acm", "prompts")
     const projectRoot = findOpencodeDir(workingDirectory)
 
     return {
-        defaultsDir: join(globalRoot, "defaults"),
-        globalOverridesDir: join(globalRoot, "overrides"),
-        configDirOverridesDir: configDir,
-        projectOverridesDir: projectRoot ? join(projectRoot, "acp-prompts", "overrides") : null,
+        globalDir: globalRoot,
+        projectDir: projectRoot ? join(projectRoot, "prompts") : null,
     }
 }
 
@@ -208,15 +200,14 @@ function buildDefaultPromptFileContent(content: string): string {
 
 function buildDefaultsReadmeContent(): string {
     const lines = [
-        "# ACP Prompt Defaults",
+        "# ACP Prompts",
         "",
-        "This directory stores reference copies of the five customizable ACP prompts.",
-        "Copy a prompt into an overrides directory to customize it.",
+        "This directory stores the five customizable ACP prompts.",
+        "Edit a prompt here for a global customization, or add the same file under a project .opencode/prompts directory.",
         "",
         "Override precedence (highest first):",
-        "1. `.opencode/acp-prompts/overrides/` (project)",
-        "2. `$OPENCODE_CONFIG_DIR/acp-prompts/overrides/` (config dir)",
-        "3. `~/.config/opencode/acp-prompts/overrides/` (global)",
+        "1. `.opencode/prompts/` (project)",
+        "2. `~/.config/opencode/acm/prompts/` (global)",
         "",
     ]
 
@@ -229,13 +220,10 @@ function buildDefaultsReadmeContent(): string {
 
 function getOverrideCandidates(paths: PromptPaths, fileName: string): string[] {
     const candidates: string[] = []
-    if (paths.projectOverridesDir) {
-        candidates.push(join(paths.projectOverridesDir, fileName))
+    if (paths.projectDir) {
+        candidates.push(join(paths.projectDir, fileName))
     }
-    if (paths.configDirOverridesDir) {
-        candidates.push(join(paths.configDirOverridesDir, fileName))
-    }
-    candidates.push(join(paths.globalOverridesDir, fileName))
+    candidates.push(join(paths.globalDir, fileName))
     return candidates
 }
 
@@ -311,12 +299,10 @@ export class PromptStore {
 
     private ensureDefaultFiles(): void {
         try {
-            mkdirSync(this.paths.defaultsDir, { recursive: true })
-            mkdirSync(this.paths.globalOverridesDir, { recursive: true })
+            mkdirSync(this.paths.globalDir, { recursive: true })
         } catch {
             this.logger.warn("Failed to initialize prompt directories", {
-                defaultsDir: this.paths.defaultsDir,
-                globalOverridesDir: this.paths.globalOverridesDir,
+                globalDir: this.paths.globalDir,
             })
             return
         }
@@ -325,9 +311,9 @@ export class PromptStore {
             const content = buildDefaultPromptFileContent(
                 toEditablePromptText(definition, readBundledPrompt(definition.fileName)),
             )
-            const filePath = join(this.paths.defaultsDir, definition.fileName)
+            const filePath = join(this.paths.globalDir, definition.fileName)
             try {
-                if (readFileIfExists(filePath) !== content) {
+                if (readFileIfExists(filePath) === null) {
                     writeFileSync(filePath, content, "utf-8")
                 }
             } catch {
@@ -338,14 +324,14 @@ export class PromptStore {
             }
         }
 
-        const readmePath = join(this.paths.defaultsDir, "README.md")
+        const readmePath = join(this.paths.globalDir, "README.md")
         const readmeContent = buildDefaultsReadmeContent()
         try {
             if (readFileIfExists(readmePath) !== readmeContent) {
                 writeFileSync(readmePath, readmeContent, "utf-8")
             }
         } catch {
-            this.logger.warn("Failed to write defaults README", { path: readmePath })
+            this.logger.warn("Failed to write prompts README", { path: readmePath })
         }
     }
 }

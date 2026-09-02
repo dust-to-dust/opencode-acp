@@ -55,7 +55,7 @@ For example, checkpoint synchronization must happen before pruning, and activity
 
 ## Compression Model
 
-The message transform groups eligible context into immutable model-facing activities such as `A001`. Tool calls and their results form one activity. Existing summaries are exposed as checkpoint references such as `B001`, with later letters representing later generations.
+The message transform groups eligible context into immutable model-facing activities such as `A1`. Tool calls and their results form one activity. Summaries are exposed as checkpoint references such as `B1`, with later letters representing later generations. References from older padded formats are not accepted or migrated.
 
 - The scheduler decides when compression is required and stores a frozen candidate list in session state.
 - The model submits `keep`, `confirmedFacts`, and `nextSteps`; omitted eligible candidates are atomically replaced by one checkpoint.
@@ -68,8 +68,8 @@ The message transform groups eligible context into immutable model-facing activi
 ACP keeps internal session-local message mappings and separate stable activity/checkpoint references:
 
 ```text
-OpenCode raw message IDs -> A001 activity
-compressed activity/checkpoint set -> B001 (then later generations)
+OpenCode raw message IDs -> A1 activity
+compressed activity/checkpoint set -> B1 (then later generations)
 ```
 
 Raw IDs and DCP-compatible metadata names remain in OpenCode and persisted state. The semantic activity/checkpoint references are the model-facing compression interface. Protected, synthetic, recent, and structurally unsafe groups are excluded before candidates are frozen.
@@ -79,7 +79,7 @@ Protection is enforced at candidate-selection and pruning layers, not only in ch
 ## State and Assets
 
 - Session persistence is under the OpenCode storage area, normally `~/.local/share/opencode/storage/plugin/acp/{sessionId}.json`; honor the platform's configured data root.
-- Built-in configuration comes from `config/acp.jsonc`; optional user layers apply global, `$OPENCODE_CONFIG_DIR`, then nearest project overrides.
-- Built-in fixed prompts come from `config/prompts/`; when `experimental.customPrompts` is enabled, editable overrides resolve project, config-dir, then global locations.
+- Built-in configuration comes from `config/acp.jsonc`; optional user layers apply global `~/.config/opencode/acm`, then the nearest project `.opencode` overrides.
+- Built-in fixed prompts come from `config/prompts/`; when `experimental.customPrompts` is enabled, editable prompts resolve the nearest project `.opencode/prompts/`, then `~/.config/opencode/acm/prompts/`.
 - Runtime values such as token counts, candidate IDs, cache boundaries, checkpoint ages, and statistics stay in TypeScript and are interpolated into prompt templates.
 - Package assets required at runtime must be included in the npm package allowlist and verified by `scripts/verify-package.mjs`.

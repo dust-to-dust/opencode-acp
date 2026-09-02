@@ -46,14 +46,14 @@ test("wrapCompressedSummary uses the requested generation ref", () => {
     const summary = wrapCompressedSummary(4, 2, "Confirmed facts:\n- decision")
     assert.ok(summary.startsWith(COMPRESSED_BLOCK_HEADER))
     assert.ok(summary.includes("Confirmed facts:"))
-    assert.ok(summary.endsWith(formatMessageIdTag("C004")))
+    assert.ok(summary.endsWith(formatMessageIdTag("C4")))
 })
 
 test("compressing raw A activities creates a B checkpoint", () => {
     const state = createSessionState()
     applyCompressionState(
         state,
-        input("A001", "A002"),
+        input("A1", "A2"),
         selection(["raw-1", "raw-2"]),
         "raw-2",
         1,
@@ -62,7 +62,7 @@ test("compressing raw A activities creates a B checkpoint", () => {
     )
 
     const block = state.prune.messages.blocksById.get(1)
-    assert.equal(block?.ref, "B001")
+    assert.equal(block?.ref, "B1")
     assert.equal(block?.tier, 1)
     assert.deepEqual(block?.directMessageIds, ["raw-1", "raw-2"])
     assert.deepEqual(state.prune.messages.byMessageId.get("raw-1")?.activeBlockIds, [1])
@@ -72,7 +72,7 @@ test("compressing a B checkpoint and a raw A activity creates C", () => {
     const state = createSessionState()
     applyCompressionState(
         state,
-        input("A001", "A001"),
+        input("A1", "A1"),
         selection(["raw-1"]),
         "raw-1",
         1,
@@ -81,7 +81,7 @@ test("compressing a B checkpoint and a raw A activity creates C", () => {
     )
     applyCompressionState(
         state,
-        input("B001", "A002", 2),
+        input("B1", "A2", 2),
         selection(["raw-2"]),
         "raw-2",
         2,
@@ -93,7 +93,7 @@ test("compressing a B checkpoint and a raw A activity creates C", () => {
     const second = state.prune.messages.blocksById.get(2)
     assert.equal(first?.active, false)
     assert.equal(first?.deactivatedByBlockId, 2)
-    assert.equal(second?.ref, "C002")
+    assert.equal(second?.ref, "C2")
     assert.equal(second?.tier, 2)
     assert.deepEqual(second?.effectiveMessageIds.sort(), ["raw-1", "raw-2"])
     assert.deepEqual(second?.consumedBlockIds, [1])
@@ -101,12 +101,12 @@ test("compressing a B checkpoint and a raw A activity creates C", () => {
 
 test("generation is one above the deepest consumed checkpoint without a tier cap", () => {
     const state = createSessionState()
-    applyCompressionState(state, input("A001", "A001"), selection(["raw-1"]), "raw-1", 1, "B", [])
+    applyCompressionState(state, input("A1", "A1"), selection(["raw-1"]), "raw-1", 1, "B", [])
     const first = state.prune.messages.blocksById.get(1)!
     first.tier = 27
-    first.ref = "AB001"
+    first.ref = "AB1"
 
-    applyCompressionState(state, input("AB001", "AB001", 2), selection([]), "raw-1", 2, "AC", [1])
+    applyCompressionState(state, input("AB1", "AB1", 2), selection([]), "raw-1", 2, "AC", [1])
     assert.equal(state.prune.messages.blocksById.get(2)?.tier, 28)
-    assert.equal(state.prune.messages.blocksById.get(2)?.ref, "AC002")
+    assert.equal(state.prune.messages.blocksById.get(2)?.ref, "AC2")
 })

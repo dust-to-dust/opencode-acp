@@ -148,23 +148,23 @@ test("compresses the complement of keep into one B checkpoint", async () => {
     ]
     const { state, compress } = setup(messages)
     state.nudges.pendingCompression = {
-        candidates: ["A002", "A003"],
-        cacheBoundary: "A003",
+        candidates: ["A2", "A3"],
+        cacheBoundary: "A3",
     }
 
     const result = await compress.execute(
         {
-            keep: ["A003"],
+            keep: ["A3"],
             confirmedFacts: ["Result one is complete."],
             nextSteps: ["Continue from result two."],
         },
         toolContext(sessionID, "compress-1", "call-1"),
     )
 
-    assert.match(result, /into B001; kept 1/)
+    assert.match(result, /into B1; kept 1/)
     assert.equal(state.nudges.pendingCompression, undefined)
     const block = state.prune.messages.blocksById.get(1)
-    assert.equal(block?.ref, "B001")
+    assert.equal(block?.ref, "B1")
     assert.deepEqual(block?.directMessageIds, ["assistant-1"])
     assert.equal(state.prune.messages.byMessageId.has("assistant-2"), false)
     assert.match(block?.summary ?? "", /Result one is complete/)
@@ -193,7 +193,7 @@ test("compresses every message in a tool activity atomically", async () => {
         message(sessionID, "user-2", "user", "continue", 4),
     ]
     const { state, compress } = setup(messages)
-    state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
 
     await compress.execute(
         { keep: [], confirmedFacts: ["The tool activity completed."], nextSteps: [] },
@@ -231,17 +231,17 @@ test("rejects a tool activity when one mapped member is missing", async () => {
     const { state, compress } = setup(messages)
     assignMessageRefs(state, messages)
     messages.splice(2, 1)
-    state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
 
     await assert.rejects(
         compress.execute(
             { keep: [], confirmedFacts: ["The tool call is complete."], nextSteps: [] },
             toolContext(sessionID, "compress-1", "compress-call-1"),
         ),
-        /Pending block A002 is stale/,
+        /Pending block A2 is stale/,
     )
     assert.equal(state.prune.messages.blocksById.size, 0)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
 test("keeping every candidate is a valid no-op and resets the growth baseline", async () => {
@@ -252,10 +252,10 @@ test("keeping every candidate is a valid no-op and resets the growth baseline", 
         message(sessionID, "user-2", "user", "continue", 3),
     ]
     const { state, compress } = setup(messages)
-    state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
 
     const result = await compress.execute(
-        { keep: ["A002"], confirmedFacts: [], nextSteps: [] },
+        { keep: ["A2"], confirmedFacts: [], nextSteps: [] },
         toolContext(sessionID, "compress-1", "call-1"),
     )
     assert.match(result, /Kept every candidate block/)
@@ -272,7 +272,7 @@ test("keep-all restores pending state when persistence fails", async () => {
         message(sessionID, "user-2", "user", "continue", 3),
     ]
     const { state, compress } = setup(messages)
-    state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
     state.nudges.lastPerMessageNudgeTokens = 100_000
     const previousDataHome = process.env.XDG_DATA_HOME
     const invalidDataHome = join(dataHome, `not-a-directory-${sessionID}`)
@@ -282,7 +282,7 @@ test("keep-all restores pending state when persistence fails", async () => {
     try {
         await assert.rejects(
             compress.execute(
-                { keep: ["A002"], confirmedFacts: [], nextSteps: [] },
+                { keep: ["A2"], confirmedFacts: [], nextSteps: [] },
                 toolContext(sessionID, "compress-1", "call-1"),
             ),
         )
@@ -290,7 +290,7 @@ test("keep-all restores pending state when persistence fails", async () => {
         process.env.XDG_DATA_HOME = previousDataHome
     }
 
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
 })
 
@@ -304,14 +304,14 @@ test("notification failure after persistence does not roll back the committed ch
     const pluginConfig = config()
     pluginConfig.pruneNotification = "minimal"
     const { state, compress } = setup(messages, pluginConfig)
-    state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
 
     const result = await compress.execute(
         { keep: [], confirmedFacts: ["Result complete."], nextSteps: [] },
         toolContext(sessionID, "compress-1", "call-1"),
     )
 
-    assert.match(result, /into B001/)
+    assert.match(result, /into B1/)
     assert.equal(state.prune.messages.blocksById.get(1)?.active, true)
     assert.equal(state.nudges.pendingCompression, undefined)
 })
@@ -323,7 +323,7 @@ test("unknown or duplicate keep refs are rejected without clearing pending state
         message(sessionID, "assistant-1", "assistant", "result", 2),
     ]
     const { state, compress } = setup(messages)
-    state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
 
     await assert.rejects(
         compress.execute(
@@ -332,16 +332,16 @@ test("unknown or duplicate keep refs are rejected without clearing pending state
         ),
         /outside the pending candidate set/,
     )
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 
     await assert.rejects(
         compress.execute(
-            { keep: ["A002", "A002"], confirmedFacts: [], nextSteps: [] },
+            { keep: ["A2", "A2"], confirmedFacts: [], nextSteps: [] },
             toolContext(sessionID, "compress-2", "call-2"),
         ),
         /duplicate block IDs/,
     )
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
 test("compressing an active B checkpoint creates C", async () => {
@@ -353,15 +353,15 @@ test("compressing an active B checkpoint creates C", async () => {
         message(sessionID, "user-2", "user", "continue", 4),
     ]
     const { state, compress } = setup(messages)
-    state.nudges.pendingCompression = { candidates: ["A002"], cacheBoundary: "A002" }
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
     await compress.execute(
         { keep: [], confirmedFacts: ["Old result complete."], nextSteps: [] },
         toolContext(sessionID, "compress-1", "call-1"),
     )
 
     state.nudges.pendingCompression = {
-        candidates: ["B001", "A003"],
-        cacheBoundary: "A003",
+        candidates: ["B1", "A3"],
+        cacheBoundary: "A3",
     }
     const result = await compress.execute(
         {
@@ -372,9 +372,9 @@ test("compressing an active B checkpoint creates C", async () => {
         toolContext(sessionID, "compress-2", "call-2"),
     )
 
-    assert.match(result, /into C002/)
+    assert.match(result, /into C2/)
     assert.equal(state.prune.messages.blocksById.get(1)?.active, false)
-    assert.equal(state.prune.messages.blocksById.get(2)?.ref, "C002")
+    assert.equal(state.prune.messages.blocksById.get(2)?.ref, "C2")
     assert.deepEqual(state.prune.messages.blocksById.get(2)?.consumedBlockIds, [1])
 })
 
@@ -415,7 +415,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     const growthTurn = structuredClone(messages)
     injectCompressNudges(state, pluginConfig, new Logger(false), growthTurn, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
 
     await compress.execute(
@@ -428,7 +428,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     )
     assert.equal(state.nudges.pendingCompression, undefined)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 103_000)
-    assert.equal(state.prune.messages.blocksById.get(1)?.ref, "B001")
+    assert.equal(state.prune.messages.blocksById.get(1)?.ref, "B1")
 
     const afterCompression = Date.now() + 1
     messages.push(
@@ -451,7 +451,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
                             confirmedFacts: ["The initial result is complete."],
                             nextSteps: ["Continue with the recent result."],
                         },
-                        output: "Created checkpoint B001",
+                        output: "Created checkpoint B1",
                     },
                 },
             ],
@@ -489,5 +489,5 @@ test("growth cycle requests compression again after a checkpoint resets the base
     injectCompressNudges(state, pluginConfig, new Logger(false), secondGrowth, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 103_000)
-    assert.ok(state.nudges.pendingCompression?.candidates.includes("B001"))
+    assert.ok(state.nudges.pendingCompression?.candidates.includes("B1"))
 })

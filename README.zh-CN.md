@@ -199,13 +199,12 @@ ACP 提供 `/acp` 斜杠命令（为向后兼容也接受 `/dcp`）：
 
 ## 配置
 
-ACP 使用自己的配置文件，按以下顺序搜索：
+ACP 先加载包内默认配置，再按以下顺序应用用户覆盖：
 
-1. **全局：** `~/.config/opencode/acp.jsonc`（或 `acp.json`），首次运行时自动创建
-2. **自定义配置目录：** `$OPENCODE_CONFIG_DIR/acp.jsonc`（或 `acp.json`），当设置了 `OPENCODE_CONFIG_DIR` 时
-3. **项目级：** 项目 `.opencode` 目录下的 `.opencode/acp.jsonc`（或 `acp.json`）
+1. **全局：** `~/.config/opencode/acm/acp.jsonc`（或 `acp.json`），首次运行时自动创建
+2. **项目级：** 项目 `.opencode` 目录下的 `.opencode/acp.jsonc`（或 `acp.json`）
 
-每一层覆盖前一层，因此项目设置优先于全局设置。修改配置后请重启 OpenCode。
+项目设置优先于全局设置。修改配置后请重启 OpenCode。
 
 > **📖 完整参数参考：** 请查看 [CONFIGURATION.zh-CN.md](./CONFIGURATION.zh-CN.md)（中文）或 [CONFIGURATION.md](./CONFIGURATION.md)（英文），包含每个可配置参数的类型、默认值和详细说明。
 
@@ -258,8 +257,8 @@ ACP 使用自己的配置文件，按以下顺序搜索：
     "allowSubAgents": true,
     // Experimental settings
     "experimental": {
-        // Enable user-editable prompt overrides under dcp-prompts directories
-        // When false (default), prompt override files/directories are ignored
+        // Enable user-editable prompt files under the acm/prompts directory
+        // When false (default), prompt files are ignored
         "customPrompts": false,
     },
     // Protect file operations from pruning via glob patterns
@@ -394,7 +393,7 @@ ACP 使用自己的配置文件，按以下顺序搜索：
 }
 ```
 
-解析为**逐字段**优先级：model > provider > 全局。未知的 provider/model ID 回退到全局值。嵌套的 `maxContextLimit` 同时优先于旧版扁平 `modelMaxLimits` 映射。多层配置（全局 → 配置目录 → 项目）按 provider/model 键深合并。
+解析为**逐字段**优先级：model > provider > 全局。未知的 provider/model ID 回退到全局值。嵌套的 `maxContextLimit` 同时优先于旧版扁平 `modelMaxLimits` 映射。两层配置（全局 → 项目）按 provider/model 键深合并。
 
 不可覆盖：`permission`、已废弃的 `minContextLimit` / `modelMinLimits` 系列、以及扁平 `modelMaxLimits` / `modelMinLimits` 映射自身。注意：`modelMaxLimits` **未废弃** —— 仍完全支持，只是优先级低于嵌套的 `maxContextLimit`。
 
@@ -402,22 +401,21 @@ ACP 使用自己的配置文件，按以下顺序搜索：
 
 ### Prompt 覆盖
 
-ACP 暴露六个可编辑的 prompt：
+ACP 暴露五个可编辑的 prompt：
 
 - `system`
 - `compress-range`
-- `compress-message`
 - `context-limit-nudge`
 - `turn-nudge`
 - `iteration-nudge`
 
 此功能默认禁用。在 ACP 配置中将 `experimental.customPrompts` 设为 `true` 以激活。
 
-启用后，托管的默认值会作为纯文本 prompt 文件写入 `~/.config/opencode/acp-prompts/defaults/`。该目录中的 `README.md` 解释了每个 prompt 以及如何创建覆盖。
+启用后，托管的 prompt 文件会作为纯文本写入 `~/.config/opencode/acm/prompts/`。该目录中的 `README.md` 解释了每个 prompt。
 
-要自定义行为，在覆盖目录下添加同名文件并作为纯文本编辑。
+要全局自定义行为，直接编辑 `~/.config/opencode/acm/prompts/` 下的同名文件。要只对项目生效，在项目根目录的 `.opencode/prompts/` 下添加文件；项目覆盖优先于全局 prompt。
 
-要重置覆盖，从覆盖目录中删除对应文件。
+要重置全局 prompt，删除 `~/.config/opencode/acm/prompts/` 下的对应文件；要重置项目 prompt，删除 `.opencode/prompts/` 下的对应文件。
 
 ### 受保护工具
 
@@ -436,8 +434,8 @@ ACP 是 DCP 的直接替代品。迁移步骤：
 
 1. 从 `opencode.json` 中移除旧的 DCP 插件
 2. 安装 ACP：`opencode plugin opencode-acp@stable --global`
-3. 复制配置：`cp ~/.config/opencode/dcp.jsonc ~/.config/opencode/acp.jsonc`
-4. 复制 prompt 覆盖（如有）：`cp -r ~/.config/opencode/dcp-prompts ~/.config/opencode/acp-prompts`
+3. 将配置复制到 `~/.config/opencode/acm/acp.jsonc`（旧配置不会自动迁移）
+4. 将 prompt 覆盖（如有）复制到 `~/.config/opencode/acm/prompts/`
 5. 复制会话状态（可选，保留压缩块）：`cp -r ~/.local/share/opencode/storage/plugin/dcp ~/.local/share/opencode/storage/plugin/acp`
 6. 重启 OpenCode
 

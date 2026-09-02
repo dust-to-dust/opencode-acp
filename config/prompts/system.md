@@ -2,9 +2,9 @@ ACP manages conversation context as immutable activity blocks and checkpoints.
 
 BLOCKS
 
-- A001, A002, ... are original activity blocks. A user request is one block. A completed assistant response, including its tool calls and outputs, is one block.
-- B001, B002, ... are checkpoints created by compressing A blocks.
-- C001 and later generations are checkpoints created when earlier checkpoints are compressed again.
+- A1, A2, ... are original activity blocks. A user request is one block. A completed assistant response, including its tool calls and outputs, is one block.
+- B1, B2, ... are checkpoints created by compressing A blocks.
+- C1 and later generations are checkpoints created when earlier checkpoints are compressed again.
 - A block ID never changes. A new generation ID is allocated only for newly compressed content.
 - Block metadata is context-control data, not user content.
 
@@ -32,4 +32,4 @@ CHECKPOINT CONTENT
 
 DECOMPRESSION
 
-Use decompress when an active checkpoint lacks exact details needed for the task. Use the checkpoint ID shown in context, such as B001 or C004.
+Use decompress when an active checkpoint lacks exact details needed for the task. Use the checkpoint ID shown in context, such as B1 or C4.

@@ -23,7 +23,6 @@ import {
     appendToLastTextPart,
     appendToAllToolParts,
     createSyntheticTextPart,
-    createSyntheticUserMessage,
     hasContent,
 } from "../utils"
 import {
@@ -39,26 +38,22 @@ import {
 } from "./utils"
 import { messageContainsProtectedTool } from "../../compress/protected-content"
 
-/**
- * Stable seed for the ACP dynamic guidance suffix message.
- * Using a fixed seed ensures the synthetic message ID is deterministic,
- * so it won't be assigned a new A-generation ref on each transform call.
- */
+/** Stable seed for a fallback text part on the ACP dynamic guidance target. */
 const ACP_SUFFIX_SEED = "acp-dynamic-guidance"
 
 /**
- * Create a synthetic user message at the END of the messages array.
- * All per-turn dynamic ACP content (context usage, visible IDs, nudges, etc.)
- * is injected into this suffix message instead of historical user messages,
- * preserving OpenAI Responses prefix cache stability.
+ * Resolve the current turn's user message as the dynamic guidance target.
+ * OpenCode only forwards messages backed by session history, so a new synthetic
+ * message added by the transform hook is not guaranteed to reach the provider.
+ * Mutating the latest user message keeps older cacheable history unchanged.
  */
 function createSuffixMessage(messages: WithParts[]): WithParts | null {
-    if (messages.length === 0) return null
-    // Use any user message as base for session/agent/model info
-    const base = messages.find((m) => m.info.role === "user") || messages[messages.length - 1]
-    const synthetic = createSyntheticUserMessage(base, "", ACP_SUFFIX_SEED)
-    messages.push(synthetic)
-    return synthetic
+    const target = messages.findLast((message) => message.info.role === "user")
+    if (!target) return null
+    if (!target.parts.some((part) => part.type === "text")) {
+        target.parts.push(createSyntheticTextPart(target, "", ACP_SUFFIX_SEED))
+    }
+    return target
 }
 
 export const injectCompressNudges = (
@@ -377,7 +372,7 @@ function refNumber(ref: string): number {
 /**
  * Build disjoint visible-id segments from the surviving messages.
  *
- * Each segment is a maximal run of contiguous refs (e.g. A003-A007).
+ * Each segment is a maximal run of contiguous refs (e.g. A3-A7).
  * Holes between segments correspond to messages already consumed by a
  * compression block — those refs are NOT safe to target. Surfacing the
  * segments (instead of a single `first–last` span) stops the model from

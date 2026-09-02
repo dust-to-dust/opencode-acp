@@ -16,7 +16,7 @@ function tag(name: string, value: string, attributes = ""): string {
 
 describe("replaceBlockIdsWithBlocked", () => {
     test("replaces checkpoint refs and preserves tag attributes", () => {
-        const input = tag(DCP_MESSAGE_TAG, "B001", 'tokens="10"')
+        const input = tag(DCP_MESSAGE_TAG, "B1", 'tokens="10"')
         assert.equal(
             replaceBlockIdsWithBlocked(input),
             tag(DCP_MESSAGE_TAG, "BLOCKED", 'tokens="10"'),
@@ -24,13 +24,13 @@ describe("replaceBlockIdsWithBlocked", () => {
     })
 
     test("supports checkpoint generations beyond Z", () => {
-        const input = `${tag(ACP_MESSAGE_TAG, "C002")} ${tag(DCP_MESSAGE_TAG, "AA123")}`
+        const input = `${tag(ACP_MESSAGE_TAG, "C2")} ${tag(DCP_MESSAGE_TAG, "AA123")}`
         const expected = `${tag(ACP_MESSAGE_TAG, "BLOCKED")} ${tag(DCP_MESSAGE_TAG, "BLOCKED")}`
         assert.equal(replaceBlockIdsWithBlocked(input), expected)
     })
 
     test("does not touch A-generation activity refs", () => {
-        const input = tag(DCP_MESSAGE_TAG, "A045")
+        const input = tag(DCP_MESSAGE_TAG, "A45")
         assert.equal(replaceBlockIdsWithBlocked(input), input)
     })
 
@@ -45,17 +45,17 @@ describe("replaceBlockIdsWithBlocked", () => {
 
 describe("stripStaleMessageRefs", () => {
     test("strips A activity tags with or without attributes", () => {
-        const input = `Text ${tag(DCP_MESSAGE_TAG, "A001", 'tokens="5"')} more ${tag(ACP_MESSAGE_TAG, "A002")}`
+        const input = `Text ${tag(DCP_MESSAGE_TAG, "A1", 'tokens="5"')} more ${tag(ACP_MESSAGE_TAG, "A2")}`
         assert.equal(stripStaleMessageRefs(input), "Text  more ")
     })
 
     test("preserves checkpoint tags", () => {
-        const input = `${tag(DCP_MESSAGE_TAG, "B001")} ${tag(ACP_MESSAGE_TAG, "AA002")}`
+        const input = `${tag(DCP_MESSAGE_TAG, "B1")} ${tag(ACP_MESSAGE_TAG, "AA2")}`
         assert.equal(stripStaleMessageRefs(input), input)
     })
 
     test("does not leave an opening tag fragment", () => {
-        const input = `Before ${tag(DCP_MESSAGE_TAG, "A003", 'type="tool"')} After`
+        const input = `Before ${tag(DCP_MESSAGE_TAG, "A3", 'type="tool"')} After`
         const result = stripStaleMessageRefs(input)
         assert.equal(result, "Before  After")
         assert.equal(result.includes(DCP_MESSAGE_TAG), false)
@@ -71,7 +71,7 @@ describe("stripHallucinationsFromString", () => {
     })
 
     test("removes message ID tags with attributes", () => {
-        const input = `before${tag(DCP_MESSAGE_TAG, "A097", 'tokens="12"')}after`
+        const input = `before${tag(DCP_MESSAGE_TAG, "A97", 'tokens="12"')}after`
         assert.equal(stripHallucinationsFromString(input), "beforeafter")
     })
 

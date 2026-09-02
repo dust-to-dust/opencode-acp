@@ -19,8 +19,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "A001",
-        endId: "A003",
+        startId: "A1",
+        endId: "A3",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -128,7 +128,7 @@ test("recap: list view shows message count instead of activity refs", async () =
 
     assert.match(result, /3 messages/)
     assert.match(result, /Summary one/)
-    assert.match(result, /AA001/)
+    assert.match(result, /AA1/)
     assert.ok(!/\bA\d{3,}\b/.test(result), "list view should not contain activity refs")
 })
 
@@ -182,7 +182,7 @@ test("recap: nonexistent blockId returns error with active block list", async ()
     const result = await runRecap([1], blocks, { blockId: 99 })
 
     assert.match(result, /not found/)
-    assert.match(result, /B001/)
+    assert.match(result, /B1/)
 })
 
 test("recap: inactive block returns deactivation message", async () => {

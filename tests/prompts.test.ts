@@ -21,16 +21,23 @@ function createFixture(): PromptFixture {
     const configHome = join(rootDir, "config")
     const configDir = join(rootDir, "config-dir")
     const workspaceDir = join(rootDir, "workspace", "nested")
-    const globalOverridesDir = join(configHome, "opencode", "acp-prompts", "overrides")
-    const configOverridesDir = join(configDir, "acp-prompts", "overrides")
-    const projectOverridesDir = join(rootDir, "workspace", ".opencode", "acp-prompts", "overrides")
+    const globalOverridesDir = join(
+        configHome,
+        ".config",
+        "opencode",
+        "acm",
+        "prompts",
+    )
+    const configOverridesDir = join(configDir, "prompts")
+    const projectOverridesDir = join(rootDir, "workspace", ".opencode", "prompts")
     mkdirSync(workspaceDir, { recursive: true })
-    mkdirSync(globalOverridesDir, { recursive: true })
-    mkdirSync(configOverridesDir, { recursive: true })
-    mkdirSync(projectOverridesDir, { recursive: true })
 
+    const previousHome = process.env.HOME
+    const previousUserProfile = process.env.USERPROFILE
     const previousConfigHome = process.env.XDG_CONFIG_HOME
     const previousConfigDir = process.env.OPENCODE_CONFIG_DIR
+    process.env.HOME = configHome
+    process.env.USERPROFILE = configHome
     process.env.XDG_CONFIG_HOME = configHome
     process.env.OPENCODE_CONFIG_DIR = configDir
 
@@ -42,6 +49,16 @@ function createFixture(): PromptFixture {
         configOverridesDir,
         projectOverridesDir,
         cleanup() {
+            if (previousHome === undefined) {
+                delete process.env.HOME
+            } else {
+                process.env.HOME = previousHome
+            }
+            if (previousUserProfile === undefined) {
+                delete process.env.USERPROFILE
+            } else {
+                process.env.USERPROFILE = previousUserProfile
+            }
             if (previousConfigHome === undefined) {
                 delete process.env.XDG_CONFIG_HOME
             } else {
@@ -58,6 +75,7 @@ function createFixture(): PromptFixture {
 }
 
 function writePrompt(directory: string, fileName: string, content: string): void {
+    mkdirSync(directory, { recursive: true })
     writeFileSync(join(directory, fileName), content, "utf-8")
 }
 
@@ -92,7 +110,15 @@ test("custom prompts can be disabled without reading overrides", () => {
         assert.match(prompts.system, /immutable activity blocks and checkpoints/i)
         assert.doesNotMatch(prompts.system, /Project override/)
         assert.equal(
-            existsSync(join(fixture.configHome, "opencode", "acp-prompts", "defaults")),
+            existsSync(
+                join(
+                    fixture.configHome,
+                    ".config",
+                    "opencode",
+                    "acm",
+                    "prompts",
+                ),
+            ),
             false,
         )
     } finally {
@@ -100,7 +126,7 @@ test("custom prompts can be disabled without reading overrides", () => {
     }
 })
 
-test("custom prompts use project, config-dir, then global precedence", () => {
+test("custom prompts use project, then ACM global precedence", () => {
     const fixture = createFixture()
     try {
         writePrompt(fixture.globalOverridesDir, "system.md", "Global override")
@@ -115,7 +141,8 @@ test("custom prompts use project, config-dir, then global precedence", () => {
 
         assert.match(prompts.system, /Project override/)
         assert.match(prompts.system, /^<dcp-system-reminder>/)
-        assert.doesNotMatch(prompts.system, /Config override|Global override/)
+        assert.doesNotMatch(prompts.system, /Config override/)
+        assert.doesNotMatch(prompts.system, /Global override/)
     } finally {
         fixture.cleanup()
     }
@@ -124,15 +151,16 @@ test("custom prompts use project, config-dir, then global precedence", () => {
 test("empty and malformed overrides fall back to the next valid layer", () => {
     const fixture = createFixture()
     try {
+        writePrompt(fixture.globalOverridesDir, "system.md", "Global fallback")
         writePrompt(fixture.configOverridesDir, "system.md", "Config fallback")
         writePrompt(fixture.projectOverridesDir, "system.md", "<dcp-system-reminder>broken")
 
         const store = new PromptStore(new Logger(false), fixture.workspaceDir, true)
-        assert.match(store.getRuntimePrompts().system, /Config fallback/)
+        assert.match(store.getRuntimePrompts().system, /Global fallback/)
 
         writePrompt(fixture.projectOverridesDir, "system.md", "   \n")
         store.reload()
-        assert.match(store.getRuntimePrompts().system, /Config fallback/)
+        assert.match(store.getRuntimePrompts().system, /Global fallback/)
     } finally {
         fixture.cleanup()
     }

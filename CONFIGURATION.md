@@ -6,12 +6,11 @@ Complete reference for all configurable parameters in Active Context Pruning (AC
 
 ## Config File Locations
 
-ACP reads config from up to three layers (later layers override earlier):
+ACP loads bundled defaults, then applies user overrides from two layers (later layers override earlier):
 
 | Layer | Path | Scope |
 |-------|------|-------|
-| **Global** | `~/.config/opencode/acp.jsonc` | All sessions |
-| **Config dir** | `$OPENCODE_CONFIG_DIR/acp.jsonc` | All sessions in this config dir |
+| **Global** | `~/.config/opencode/acm/acp.jsonc` | All sessions |
 | **Project** | `.opencode/acp.jsonc` (searched upward from cwd) | Current project only |
 
 > **Tip:** Add `"$schema": "https://raw.githubusercontent.com/ranxianglei/opencode-acp/master/dcp.schema.json"` for IDE autocompletion.
@@ -19,7 +18,7 @@ ACP reads config from up to three layers (later layers override earlier):
 ## Quick Start
 
 ```jsonc
-// ~/.config/opencode/acp.jsonc
+// ~/.config/opencode/acm/acp.jsonc
 {
     "$schema": "https://raw.githubusercontent.com/ranxianglei/opencode-acp/master/dcp.schema.json",
     "enabled": true,
@@ -126,7 +125,7 @@ Experimental features that may change or be removed.
 - **Type:** `boolean`
 - **Default:** `false`
 - **Status:** EXPERIMENTAL
-- **Description:** Enable loading custom prompt overrides from `~/.config/opencode/acp-prompts/`.
+- **Description:** Enable loading custom prompt overrides from `~/.config/opencode/acm/prompts/`.
 
 ---
 
@@ -195,7 +194,7 @@ Core compression behavior.
 - **Type:** `Record<string, ProviderOverrides>` where `ProviderOverrides = Partial<CompressOverridableConfig> & { models?: Record<string, Partial<CompressOverridableConfig>> }` (all fields optional at both levels)
 - **Default:** `undefined`
 - **Status:** ACTIVE
-- **Description:** Nested per-provider / per-model overrides for **every tunable compress field**, resolved field-by-field with the cascade **model > provider > global** (mirrors the sibling project billion-context-pi, issue #344). Deeper levels only override when the field is explicitly set — unset fields never clear shallower values. `0` / `false` are explicit values, not "unset". Unknown provider/model ids fall back to the global value. Percentages and `"X%"` limits resolve against the active model's context window. Across the three config file layers (global → config dir → project) the maps deep-merge per provider/model key — a project layer can narrow one provider without wiping others configured in lower layers.
+- **Description:** Nested per-provider / per-model overrides for **every tunable compress field**, resolved field-by-field with the cascade **model > provider > global** (mirrors the sibling project billion-context-pi, issue #344). Deeper levels only override when the field is explicitly set — unset fields never clear shallower values. `0` / `false` are explicit values, not "unset". Unknown provider/model ids fall back to the global value. Percentages and `"X%"` limits resolve against the active model's context window. Across the two config file layers (global → project) the maps deep-merge per provider/model key — a project layer can narrow one provider without wiping others configured globally.
 - **Overridable fields:** `maxContextLimit`, `emergencyThresholdPercent`, `minNudgeContextPercent`, `nudgeFrequency`, `iterationNudgeThreshold`, `toolOutputNudgeThreshold`, `nudgeGrowthTokens`, `minNudgeGrowthRatio`, `minNudgeGrowthFloor`, `nudgeForce`, `protectedTools`, `showCompression`, `summaryBuffer`, `protectTags`, `protectUserMessages`, `maxSummaryLengthHard`, `minCompressRange`, `maxVisibleSegments`, `keepEmbedMaxChars`, `lastSegmentSoftBlock`, `preserveRecentMessages`, `preserveRecentTokens`, `preserveLastUserMessage`.
 - **Not overridable:** `permission` (session-level, fixed before model info is known), the deprecated `minContextLimit` / `modelMinLimits` family, the flat `modelMaxLimits` / `modelMinLimits` maps themselves, and `providers` itself. `modelMaxLimits` itself is **not** deprecated — it remains fully supported (only outranked). For `maxContextLimit` the precedence when set nested is **nested override > `modelMaxLimits` flat map > global**. `protectedTools` set here affects the compress tool and nudge-side logic; the system-prompt protected-tools listing (shown at prompt build time, before model info is available) always reflects the global value.
 

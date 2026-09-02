@@ -36,7 +36,7 @@ export type CompressionTier = number
 
 export interface CompressionBlock {
     blockId: number
-    /** Stable model-facing checkpoint ref, e.g. B001 or C004. */
+    /** Stable model-facing checkpoint ref, e.g. B1 or C4. */
     ref?: string
     runId: number
     active: boolean

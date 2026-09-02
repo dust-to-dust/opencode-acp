@@ -230,15 +230,15 @@ test("basic pipeline: assigns message IDs and preserves all messages", async () 
     assert.equal(output.messages.length, 5)
 
     // Message IDs should be assigned (suffix message excluded from ref assignment)
-    assert.equal(state.messageIds.byRawId.get("u1"), "A001")
-    assert.equal(state.messageIds.byRawId.get("a1"), "A002")
-    assert.equal(state.messageIds.byRawId.get("u2"), "A003")
-    assert.equal(state.messageIds.byRawId.get("a2"), "A004")
-    assert.equal(state.messageIds.byRawId.get("u3"), "A005")
+    assert.equal(state.messageIds.byRawId.get("u1"), "A1")
+    assert.equal(state.messageIds.byRawId.get("a1"), "A2")
+    assert.equal(state.messageIds.byRawId.get("u2"), "A3")
+    assert.equal(state.messageIds.byRawId.get("a2"), "A4")
+    assert.equal(state.messageIds.byRawId.get("u3"), "A5")
 
     // Reverse mapping should exist
-    assert.equal(state.messageIds.byRef.get("A001"), "u1")
-    assert.equal(state.messageIds.byRef.get("A005"), "u3")
+    assert.equal(state.messageIds.byRef.get("A1"), "u1")
+    assert.equal(state.messageIds.byRef.get("A5"), "u3")
 })
 
 // ─── Test: Message IDs are stable across multiple pipeline runs ──────────────
@@ -252,8 +252,8 @@ test("message IDs remain stable across sequential pipeline calls", async () => {
     }
     await handler({}, output1)
 
-    assert.equal(state.messageIds.byRawId.get("u1"), "A001")
-    assert.equal(state.messageIds.byRawId.get("a1"), "A002")
+    assert.equal(state.messageIds.byRawId.get("u1"), "A1")
+    assert.equal(state.messageIds.byRawId.get("a1"), "A2")
     assert.equal(state.messageIds.nextRef, 3)
 
     // Second call adds new messages; existing IDs should remain stable
@@ -268,11 +268,11 @@ test("message IDs remain stable across sequential pipeline calls", async () => {
     await handler({}, output2)
 
     // Old IDs stable
-    assert.equal(state.messageIds.byRawId.get("u1"), "A001")
-    assert.equal(state.messageIds.byRawId.get("a1"), "A002")
+    assert.equal(state.messageIds.byRawId.get("u1"), "A1")
+    assert.equal(state.messageIds.byRawId.get("a1"), "A2")
     // New IDs assigned
-    assert.equal(state.messageIds.byRawId.get("u2"), "A003")
-    assert.equal(state.messageIds.byRawId.get("a2"), "A004")
+    assert.equal(state.messageIds.byRawId.get("u2"), "A3")
+    assert.equal(state.messageIds.byRawId.get("a2"), "A4")
     assert.equal(state.messageIds.nextRef, 5)
 })
 
@@ -336,8 +336,8 @@ test("compression blocks: compressed messages are replaced with summaries", asyn
         mode: "message",
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "A001",
-        endId: "A002",
+        startId: "A1",
+        endId: "A2",
         anchorMessageId: "u2", // summary injected at this anchor
         compressMessageId: "msg-compress",
         compressCallId: "call-compress",
@@ -430,8 +430,8 @@ test("compression summary: never produces two consecutive user turns (Bug 36)", 
         mode: "message",
         topic: "early work",
         batchTopic: "early work",
-        startId: "A001",
-        endId: "A002",
+        startId: "A1",
+        endId: "A2",
         anchorMessageId: "u1",
         compressMessageId: "msg-compress",
         compressCallId: "call-compress",
@@ -532,8 +532,8 @@ test("compression summary: emits standalone summary when range is last (no user 
         mode: "message",
         topic: "closing work",
         batchTopic: "closing work",
-        startId: "A003",
-        endId: "A004",
+        startId: "A3",
+        endId: "A4",
         anchorMessageId: "u2",
         compressMessageId: "msg-compress",
         compressCallId: "call-compress",
@@ -614,8 +614,8 @@ test("message IDs remain consistent after compression and pruning", async () => 
         mode: "message",
         topic: "early chat",
         batchTopic: "early chat",
-        startId: "A001",
-        endId: "A002",
+        startId: "A1",
+        endId: "A2",
         anchorMessageId: "u3",
         compressMessageId: "msg-comp",
         compressCallId: "call-comp",
@@ -738,10 +738,10 @@ test("deny permission: still filters messages and strips hallucinations", async 
 test("state persistence: session state survives save/load round-trip", async () => {
     const { state, tempDir } = setupPipeline()
 
-    state.messageIds.byRawId.set("u1", "A001")
-    state.messageIds.byRawId.set("a1", "A002")
-    state.messageIds.byRef.set("A001", "u1")
-    state.messageIds.byRef.set("A002", "a1")
+    state.messageIds.byRawId.set("u1", "A1")
+    state.messageIds.byRawId.set("a1", "A2")
+    state.messageIds.byRef.set("A1", "u1")
+    state.messageIds.byRef.set("A2", "a1")
     state.messageIds.nextRef = 3
     state.stats.totalPruneTokens = 5000
 
@@ -752,8 +752,8 @@ test("state persistence: session state survives save/load round-trip", async () 
     const loaded = await loadSessionState(SID, logger)
 
     assert.ok(loaded, "state file should be loadable")
-    assert.equal(loaded!.messageIds?.byRawId?.["u1"], "A001")
-    assert.equal(loaded!.messageIds?.byRawId?.["a1"], "A002")
+    assert.equal(loaded!.messageIds?.byRawId?.["u1"], "A1")
+    assert.equal(loaded!.messageIds?.byRawId?.["a1"], "A2")
     assert.equal(loaded!.messageIds?.nextRef, 3)
     assert.equal(loaded!.stats.totalPruneTokens, 5000)
 

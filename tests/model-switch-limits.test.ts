@@ -294,7 +294,7 @@ test("catalog miss + same identity keeps the limit (no needless blindness)", asy
     })
 
     assert.equal(state.modelContextLimit, OLD_LIMIT, "same-identity limit must be kept")
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
 test("model switch to smaller window: compression is scheduled when over threshold", async () => {
@@ -308,7 +308,7 @@ test("model switch to smaller window: compression is scheduled when over thresho
     })
 
     assert.equal(state.modelContextLimit, OLD_LIMIT)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
 // ─── Catalog population ──────────────────────────────────────────────────────

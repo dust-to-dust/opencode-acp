@@ -4,7 +4,7 @@ Use the real source implementation in tests. Do not locally reimplement the beha
 
 ## Test Runner
 
-The package test script is `node --import tsx --test tests/*.test.ts`. Run a specific test file with:
+The package test script is `npm test`; it discovers all `tests/**/*.test.ts` files without relying on shell wildcard expansion. Run a specific test file with:
 
 ```bash
 node --import tsx --test tests/<file>.test.ts

@@ -19,8 +19,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "A001",
-        endId: "A003",
+        startId: "A1",
+        endId: "A3",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -132,7 +132,7 @@ test("acp_status: single block shows correct header with summary and original si
     const result = await runStatus([1], blocks)
 
     assert.match(result, /COMPRESSED BLOCKS/)
-    assert.match(result, /B001/)
+    assert.match(result, /B1/)
     assert.match(result, /"My topic"/)
 })
 
@@ -145,7 +145,7 @@ test("acp_status: plural header for multiple blocks", async () => {
 
     assert.match(result, /2 active/)
     assert.match(result, /1\.1K summary/)
-    assert.match(result, /E002/)
+    assert.match(result, /E2/)
     assert.match(result, /T4: 300/)
 })
 
@@ -211,7 +211,7 @@ test("acp_status: scope=compressed shows detailed block info", async () => {
     assert.match(result, /age=3/)
     assert.match(result, /old/)
     assert.match(result, /eff=4/)
-    assert.match(result, /nested=\[B002,C003\]/)
+    assert.match(result, /nested=\[B2,C3\]/)
 })
 
 test("acp_status: scope=compressed sort=size orders largest first", async () => {
@@ -280,7 +280,7 @@ test("acp_status: scope=uncompressed defaults to activities view", async () => {
     ]
     const mockClient = makeMockClient(mockMsgs)
     const state = makeState([], new Map())
-    state.messageIds.byRawId.set("raw-1", "A001")
+    state.messageIds.byRawId.set("raw-1", "A1")
     const ctx: ToolFactoryContext = {
         client: mockClient,
         registry: singletonRegistry(state),
@@ -306,7 +306,7 @@ test("acp_status: scope=uncompressed view=messages shows per-message listing", a
     ]
     const mockClient = makeMockClient(mockMsgs)
     const state = makeState([], new Map())
-    state.messageIds.byRawId.set("raw-1", "A001")
+    state.messageIds.byRawId.set("raw-1", "A1")
     const ctx: ToolFactoryContext = {
         client: mockClient,
         registry: singletonRegistry(state),
@@ -333,7 +333,7 @@ test("acp_status: scope=uncompressed view=messages with tool filter shows filter
     ]
     const mockClient = makeMockClient(mockMsgs)
     const state = makeState([], new Map())
-    state.messageIds.byRawId.set("raw-1", "A001")
+    state.messageIds.byRawId.set("raw-1", "A1")
     const ctx: ToolFactoryContext = {
         client: mockClient,
         registry: singletonRegistry(state),
@@ -378,7 +378,7 @@ test("acp_status: scope=compressed shows inactive/consumed blocks", async () => 
     )
     const result = await runStatus([1], blocks, { scope: "compressed" })
 
-    assert.match(result, /B002/)
+    assert.match(result, /B2/)
     assert.match(result, /"consumed"/)
     assert.match(result, /\[inactive\]/)
     assert.match(result, /1 active, 1 inactive\/consumed/)
@@ -395,7 +395,7 @@ test("acp_status: scope=compressed marks user-decompressed blocks as inactive", 
     )
     const result = await runStatus([], blocks, { scope: "compressed" })
 
-    assert.match(result, /B005/)
+    assert.match(result, /B5/)
     assert.match(result, /\[inactive\]/)
     assert.match(result, /0 active, 1 inactive\/consumed/)
 })
@@ -404,7 +404,7 @@ test("acp_status: scope=compressed does not add inactive marker to active blocks
     const blocks = blocksMap(makeBlock({ blockId: 1, active: true, topic: "active block" }))
     const result = await runStatus([1], blocks, { scope: "compressed" })
 
-    assert.match(result, /B001/)
+    assert.match(result, /B1/)
     assert.doesNotMatch(result, /\[inactive\]/)
 })
 

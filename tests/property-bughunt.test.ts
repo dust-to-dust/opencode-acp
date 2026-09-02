@@ -37,8 +37,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         topic: "test",
         ref: formatBlockRef(blockId),
         tier: 1,
-        startId: "A001",
-        endId: "A005",
+        startId: "A1",
+        endId: "A5",
         anchorMessageId: "msg-1",
         compressMessageId: "msg-compress",
         includedBlockIds: [],
@@ -155,9 +155,9 @@ test("activity refs parse/format round-trip", () => {
 })
 
 test("activity and checkpoint boundary refs parse canonical forms", () => {
-    assert.deepEqual(parseBoundaryId("A001"), {
+    assert.deepEqual(parseBoundaryId("A1"), {
         kind: "message",
-        ref: "A001",
+        ref: "A1",
         index: 1,
     })
     assert.deepEqual(parseBoundaryId("A99999"), {
@@ -165,14 +165,14 @@ test("activity and checkpoint boundary refs parse canonical forms", () => {
         ref: "A99999",
         index: 99999,
     })
-    assert.deepEqual(parseBoundaryId("B001"), {
+    assert.deepEqual(parseBoundaryId("B1"), {
         kind: "compressed-block",
-        ref: "B001",
+        ref: "B1",
         blockId: 1,
     })
-    assert.deepEqual(parseBoundaryId("C042"), {
+    assert.deepEqual(parseBoundaryId("C42"), {
         kind: "compressed-block",
-        ref: "C042",
+        ref: "C42",
         blockId: 42,
     })
     assert.equal(parseBoundaryId("A000"), null)

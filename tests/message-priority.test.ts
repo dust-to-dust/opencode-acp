@@ -194,13 +194,13 @@ test("injectMessageIds injects the activity ref into every assistant tool output
     assert.equal(assistantTextTwo?.type, "text")
     assert.equal(assistantToolTwo?.type, "tool")
     // User activities: the same stable ref is injected into all text parts.
-    assert.match((userTextOne as any).text, /\n\n<dcp-message-id[^>]*>A001<\/dcp-message-id>/)
-    assert.match((userTextTwo as any).text, /\n\n<dcp-message-id[^>]*>A001<\/dcp-message-id>/)
+    assert.match((userTextOne as any).text, /\n\n<dcp-message-id[^>]*>A1<\/dcp-message-id>/)
+    assert.match((userTextTwo as any).text, /\n\n<dcp-message-id[^>]*>A1<\/dcp-message-id>/)
     // Assistant activities: the activity ref is injected into every tool output.
     assert.doesNotMatch((assistantTextOne as any).text, /dcp-message-id/)
-    assert.match((assistantToolOne as any).state.output, /A002<\/dcp-message-id>/)
+    assert.match((assistantToolOne as any).state.output, /A2<\/dcp-message-id>/)
     assert.doesNotMatch((assistantTextTwo as any).text, /dcp-message-id/)
-    assert.match((assistantToolTwo as any).state.output, /A002<\/dcp-message-id>/)
+    assert.match((assistantToolTwo as any).state.output, /A2<\/dcp-message-id>/)
 })
 
 test("injectMessageIds keeps one activity ref across tool outputs in range mode", () => {
@@ -242,9 +242,9 @@ test("injectMessageIds keeps one activity ref across tool outputs in range mode"
 
     // Every tool output gets the activity ref.
     assert.doesNotMatch((assistantTextOne as any).text, /dcp-message-id/)
-    assert.match((assistantToolOne as any).state.output, /A002<\/dcp-message-id>/)
+    assert.match((assistantToolOne as any).state.output, /A2<\/dcp-message-id>/)
     assert.doesNotMatch((assistantTextTwo as any).text, /dcp-message-id/)
-    assert.match((assistantToolTwo as any).state.output, /A002<\/dcp-message-id>/)
+    assert.match((assistantToolTwo as any).state.output, /A2<\/dcp-message-id>/)
 })
 
 test("range-mode nudges append to existing text parts before tool outputs", () => {

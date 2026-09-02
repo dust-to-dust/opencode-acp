@@ -417,6 +417,7 @@ function buildBoundaryLookup(
         if (rawIndex === undefined) {
             continue
         }
+        if (lookup.has(messageRef)) continue
         lookup.set(messageRef, {
             kind: "message",
             rawIndex,

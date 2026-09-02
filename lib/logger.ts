@@ -3,7 +3,7 @@ import { join } from "path"
 import { existsSync } from "fs"
 import { homedir } from "os"
 
-/** ACP version, injected at build time by tsup define */
+/** ACP version marker retained for debug context snapshots. */
 declare const ACP_VERSION: string | undefined
 
 const LOG_VERSION = typeof ACP_VERSION !== "undefined" ? ACP_VERSION : "dev"
@@ -86,30 +86,7 @@ export class Logger {
         return parts.join(" ")
     }
 
-    private getCallerFile(skipFrames: number = 3): string {
-        const originalPrepareStackTrace = Error.prepareStackTrace
-        try {
-            const err = new Error()
-            Error.prepareStackTrace = (_, stack) => stack
-            const stack = err.stack as unknown as NodeJS.CallSite[]
-            Error.prepareStackTrace = originalPrepareStackTrace
-
-            // Skip specified number of frames to get to actual caller
-            for (let i = skipFrames; i < stack.length; i++) {
-                const filename = stack[i]?.getFileName()
-                if (filename && !filename.includes("/logger.")) {
-                    // Extract just the filename without path and extension
-                    const match = filename.match(/([^/\\]+)\.[tj]s$/)
-                    return match ? match[1] : filename
-                }
-            }
-            return "unknown"
-        } catch {
-            return "unknown"
-        }
-    }
-
-    private async write(level: string, component: string, message: string, data?: unknown) {
+    private async write(level: string, message: string, data?: unknown) {
         // Levels below the resolved verbosity are dropped here; WARN/ERROR
         // still land by default because the production default is `info`.
         if (!this.shouldWrite(level.toLowerCase() as LogLevel)) return
@@ -117,41 +94,41 @@ export class Logger {
         try {
             await this.ensureLogDir()
 
-            const timestamp = new Date().toISOString()
+            const now = new Date()
+            const timestamp = now.toISOString().slice(0, 19)
             const dataStr = this.formatData(data)
+            // Keep multiline diagnostics in one physical log record while
+            // preserving the original line boundaries for inspection.
+            const singleLineMessage = message.replace(/\r\n|\r|\n/g, "\\n")
 
-            const logLine = `${timestamp} ${level.padEnd(5)} ${component}: ${message}${dataStr ? " | " + dataStr : ""} | v=${LOG_VERSION}\n`
+            const logLine = `${timestamp} ${level.padEnd(5)} ${singleLineMessage}${dataStr ? " | " + dataStr : ""}\n`
 
             const dailyLogDir = join(this.logDir, "daily")
             if (!existsSync(dailyLogDir)) {
                 await mkdir(dailyLogDir, { recursive: true })
             }
 
-            const logFile = join(dailyLogDir, `${new Date().toISOString().split("T")[0]}.log`)
+            const logFile = join(dailyLogDir, `${now.toISOString().split("T")[0]}.log`)
             await writeFile(logFile, logLine, { flag: "a" })
         } catch (error) {}
     }
 
     info(message: string, data?: unknown) {
         if (!this.shouldWrite("info")) return
-        const component = this.getCallerFile(2)
-        return this.write("INFO", component, message, data)
+        return this.write("INFO", message, data)
     }
 
     debug(message: string, data?: unknown) {
         if (!this.shouldWrite("debug")) return
-        const component = this.getCallerFile(2)
-        return this.write("DEBUG", component, message, data)
+        return this.write("DEBUG", message, data)
     }
 
     warn(message: string, data?: any) {
-        const component = this.getCallerFile(2)
-        return this.write("WARN", component, message, data)
+        return this.write("WARN", message, data)
     }
 
     error(message: string, data?: any) {
-        const component = this.getCallerFile(2)
-        return this.write("ERROR", component, message, data)
+        return this.write("ERROR", message, data)
     }
 
     /**

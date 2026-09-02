@@ -191,8 +191,8 @@ test("injectMessageIds renders stable A activity refs", () => {
 
     injectMessageIds(state, buildConfig(), messages)
 
-    assert.match(messageText(messages[0]), /<dcp-message-id[^>]*>A001<\/dcp-message-id>/)
-    assert.match(messageText(messages[1]), /<dcp-message-id[^>]*>A002<\/dcp-message-id>/)
+    assert.match(messageText(messages[0]), /<dcp-message-id[^>]*>A1<\/dcp-message-id>/)
+    assert.match(messageText(messages[1]), /<dcp-message-id[^>]*>A2<\/dcp-message-id>/)
 })
 
 test("injectMessageIds appends the same A ref to every completed tool output", () => {
@@ -209,7 +209,7 @@ test("injectMessageIds appends the same A ref to every completed tool output", (
         .filter((part) => part.type === "tool" && part.state.status === "completed")
         .map((part) => part.state.output)
     assert.equal(outputs.length, 2)
-    assert.ok(outputs.every((output) => output.includes("A002")))
+    assert.ok(outputs.every((output) => output.includes("A2")))
 })
 
 test("injectCompressNudges is inert when compression permission is denied", () => {
@@ -267,15 +267,17 @@ test("multi-turn growth freezes a short cache-safe selection request", () => {
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
     assert.deepEqual(state.nudges.pendingCompression, {
-        candidates: ["A002"],
-        cacheBoundary: "A002",
+        candidates: ["A2"],
+        cacheBoundary: "A2",
         createdAtTokens: 103_000,
     })
 
-    const request = messageText(secondTurn.at(-1)!)
-    assert.match(request, /^\[ACP compression required\]/)
-    assert.match(request, /Eligible blocks \(oldest first\):\nA002/)
-    assert.match(request, /Cache boundary: A002/)
+    assert.equal(secondTurn.length, raw.length, "request must not add a synthetic message")
+    const requestTarget = secondTurn.find((message) => message.info.id === "user-2")!
+    const request = messageText(requestTarget)
+    assert.match(request, /\[ACP compression required\]/)
+    assert.match(request, /Eligible blocks \(oldest first\):\nA2/)
+    assert.match(request, /Cache boundary: A2/)
     assert.match(request, /Template marker: semantic/)
     assert.doesNotMatch(request, /Confirmed facts|compression philosophy|HOW TO COMPRESS/i)
 
@@ -285,7 +287,9 @@ test("multi-turn growth freezes a short cache-safe selection request", () => {
     injectCompressNudges(state, config, logger, pendingTurn, prompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
-    assert.equal(messageText(pendingTurn.at(-1)!), request)
+    assert.equal(pendingTurn.length, raw.length, "pending request must reuse the current user message")
+    const pendingTarget = pendingTurn.find((message) => message.info.id === "user-2")!
+    assert.equal(messageText(pendingTarget), request)
 })
 
 test("nothing eligible does not consume the growth baseline", () => {
@@ -309,7 +313,7 @@ test("nothing eligible does not consume the growth baseline", () => {
     injectCompressNudges(state, config, logger, eligibleTurn, prompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
 test("protected tool activities never enter the pending candidate set", () => {
@@ -331,8 +335,8 @@ test("protected tool activities never enter the pending candidate set", () => {
     injectCompressNudges(state, config, logger, current, prompts)
 
     assert.equal(state.nudges.shouldInjectThisTurn, true)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A003", "A004"])
-    assert.ok(!state.nudges.pendingCompression?.candidates.includes("A002"))
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A3", "A4"])
+    assert.ok(!state.nudges.pendingCompression?.candidates.includes("A2"))
 })
 
 test("stale pending candidates are replaced without consuming the growth baseline", () => {
@@ -355,7 +359,7 @@ test("stale pending candidates are replaced without consuming the growth baselin
 
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A002"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
 test("activities with a missing tool member are not offered for compression", () => {
@@ -367,7 +371,7 @@ test("activities with a missing tool member are not offered for compression", ()
     ]
     const state = initializeState(raw)
     state.nudges.lastPerMessageNudgeTokens = 100_000
-    state.messageIds.byRawId.set("missing-tool-result", "A002")
+    state.messageIds.byRawId.set("missing-tool-result", "A2")
 
     injectCompressNudges(state, config, logger, transformed(raw), prompts)
 
@@ -390,14 +394,14 @@ test("protected user and tagged activities are excluded from selection", () => {
     const tagState = initializeState(raw)
     tagState.nudges.lastPerMessageNudgeTokens = 100_000
     injectCompressNudges(tagState, tagConfig, logger, transformed(raw), prompts)
-    assert.deepEqual(tagState.nudges.pendingCompression?.candidates, ["A002", "A004"])
+    assert.deepEqual(tagState.nudges.pendingCompression?.candidates, ["A2", "A4"])
 
     const userConfig = buildConfig()
     userConfig.compress.protectUserMessages = true
     const userState = initializeState(raw)
     userState.nudges.lastPerMessageNudgeTokens = 100_000
     injectCompressNudges(userState, userConfig, logger, transformed(raw), prompts)
-    assert.deepEqual(userState.nudges.pendingCompression?.candidates, ["A002", "A004"])
+    assert.deepEqual(userState.nudges.pendingCompression?.candidates, ["A2", "A4"])
 })
 
 test("protecting one member excludes the entire tool activity", () => {
@@ -420,16 +424,16 @@ test("protecting one member excludes the entire tool activity", () => {
 
     injectCompressNudges(state, config, logger, transformed(raw), prompts)
 
-    assert.equal(state.messageIds.byRawId.get("assistant-call"), "A002")
-    assert.equal(state.messageIds.byRawId.get("tool-result"), "A002")
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A003"])
+    assert.equal(state.messageIds.byRawId.get("assistant-call"), "A2")
+    assert.equal(state.messageIds.byRawId.get("tool-result"), "A2")
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A3"])
 })
 
 test("recent-message protection includes visible checkpoint carriers", () => {
     const config = buildConfig()
     config.compress.preserveRecentMessages = 2
     const carrier = assistantMessage("compress-1", "checkpoint", 3, 103_000, [
-        toolPart("compress-1", "compress-call-1", "compress", "created B001"),
+            toolPart("compress-1", "compress-call-1", "compress", "created B1"),
     ])
     const raw = [
         userMessage("user-1", "request", 1),
@@ -448,10 +452,10 @@ test("recent-message protection includes visible checkpoint carriers", () => {
         summaryTokens: 20,
         durationMs: 0,
         topic: "checkpoint",
-        startId: "A002",
-        endId: "A002",
+        startId: "A2",
+        endId: "A2",
         anchorMessageId: "assistant-1",
-        ref: "B001",
+        ref: "B1",
         tier: 1,
         compressMessageId: "compress-1",
         includedBlockIds: [],
@@ -479,10 +483,16 @@ test("recent-message protection includes visible checkpoint carriers", () => {
 
     config.compress.preserveRecentMessages = 1
     injectCompressNudges(state, config, logger, transformed(raw), prompts)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["B001"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["B1"])
 })
 
 test("formatMessageIdTag accepts semantic activity refs", () => {
-    const tag = formatMessageIdTag("C014")
+    const tag = formatMessageIdTag("C14")
+    const tagName = ["dcp", "message", "id"].join("-")
+    assert.equal(tag, `\n<${tagName}>C14</${tagName}>`)
+    /*
+     * The old literal tag assertion is kept out of the executable test because
+     * the context transport redacts the tag name while editing this file.
     assert.match(tag, /<dcp-message-id>C014<\/dcp-message-id>/)
+    */
 })

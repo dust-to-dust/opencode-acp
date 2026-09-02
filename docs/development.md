@@ -22,6 +22,8 @@ OpenCode resolves the `latest` plugin cache under:
 ~/.cache/opencode/packages/opencode-acp@latest/node_modules/opencode-acp/
 ```
 
+The helper rebuilds the deployed package's runtime dependency tree, including the `@opencode-ai/plugin` peer dependency. It removes source-only `devDependencies` from the deployed metadata and marks the cache package as version `9.9.9`, while leaving the source package version unchanged.
+
 After deployment, restart OpenCode because the running process caches the module. Inspect the deployed bundle when a deployment needs verification.
 
 Do not use the older `~/.cache/opencode/node_modules/opencode-acp/` path for `@latest` resolution.

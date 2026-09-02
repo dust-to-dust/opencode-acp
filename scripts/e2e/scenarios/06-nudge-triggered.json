@@ -1,6 +1,20 @@
 {
     "name": "nudge-triggered-compress",
     "description": "Real nudge→compress flow: large text turns grow context past growthFloor, ACP auto-injects nudge, fake LLM detects it and compresses. Verifies block count + nudge baseline.",
+    "acpConfig": {
+        "compress": {
+            "minCompressRange": 0,
+            "maxSummaryLengthHard": 20000,
+            "maxContextLimit": 20000,
+            "minContextLimit": 10000,
+            "nudgeGrowthTokens": 200,
+            "minNudgeGrowthFloor": 100,
+            "minNudgeGrowthRatio": 0.01,
+            "preserveRecentMessages": 0,
+            "preserveRecentTokens": 0,
+            "preserveLastUserMessage": false
+        }
+    },
     "turns": [
         {
             "respond": "nudge-compress",

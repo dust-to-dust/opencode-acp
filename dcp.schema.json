@@ -92,7 +92,7 @@
                 "customPrompts": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Enable user-editable prompt overrides under dcp-prompts directories"
+                    "description": "Enable user-editable prompt overrides under acm/prompts directories"
                 }
             },
             "default": {

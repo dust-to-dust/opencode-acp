@@ -272,7 +272,7 @@ export function createChatMessageTransformHandler(
                       // opencode's runtime loop detects it as "last user" (role-only,
                       // ignores the flag) → phantom turn → compress → notification →
                       // infinite loop. Use logger.debug + toast instead.
-                      logger.debug(`[ACP Debug] Nudge injected:\n${text}`)
+                      logger.debug(`[ACP Debug] Nudge injected:${text}`)
                       client.tui
                           .showToast({
                               body: {

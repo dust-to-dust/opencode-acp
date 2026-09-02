@@ -19,7 +19,7 @@ Prerequisites: `opencode`, `bun`, `node`, and `curl` on `PATH`.
 
 ## Flow
 
-The runner creates an isolated OpenCode home under `/tmp/acp-e2e`, starts the fake OpenAI-compatible server, executes each scripted conversation, and verifies ACP's persisted state.
+The runner creates an isolated OpenCode home and project under `/tmp/acp-e2e`, starts the fake OpenAI-compatible server, executes each scripted conversation, and verifies ACP's persisted state. The fake project keeps OpenCode's Git project identity cache out of the real repository's `.git/opencode` file.
 
 The fake LLM does not choose when compression starts. It emits growth text or tool output until ACP appends `[ACP compression required]`. It then parses the eligible `A`/checkpoint refs from that fixed tail request and calls:
 

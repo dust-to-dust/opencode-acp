@@ -21,8 +21,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         durationMs: 0,
         topic: "test topic",
         batchTopic: "test topic",
-        startId: "A001",
-        endId: "A003",
+        startId: "A1",
+        endId: "A3",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -115,7 +115,7 @@ interface ParsedHit {
     label: string
 }
 
-const HIT_LINE_REGEX = /📦 \[([A-Z]+\d{3,})\] ⭐* \(([\d.]+)\) "(.*?)"/g
+const HIT_LINE_REGEX = /📦 \[([A-Z]+\d+)\] ⭐* \(([\d.]+)\) "(.*?)"/g
 
 function parseHits(output: string): ParsedHit[] {
     const hits: ParsedHit[] = []
@@ -144,9 +144,9 @@ test("topic match: query matching a block topic returns a result", async () => {
 
     const hits = parseHits(output)
     assert.equal(hits.length, 1, "expected exactly one hit for topic match")
-    assert.equal(hits[0].ref, "B001")
+    assert.equal(hits[0].ref, "B1")
     assert.equal(hits[0].label, "decoder accuracy improvements")
-    assert.match(output, /decompress\(B001\)/)
+    assert.match(output, /decompress\(B1\)/)
     // Single topic occurrence → 0.15 relevance.
     assert.equal(hits[0].relevance, 0.15)
 })
@@ -167,7 +167,7 @@ test("summary match: query matching summary text returns a result", async () => 
 
     const hits = parseHits(output)
     assert.equal(hits.length, 1, "expected one hit from summary-only match")
-    assert.equal(hits[0].ref, "C002")
+    assert.equal(hits[0].ref, "C2")
     // 3 summary occurrences → min(3 * 0.04, 0.20) = 0.12
     assert.equal(hits[0].relevance, 0.12)
 })
@@ -187,11 +187,11 @@ test("relevance ordering: higher-scoring blocks appear before lower-scoring ones
     const hits = parseHits(output)
     assert.equal(hits.length, 3)
     // Descending relevance: 0.45, 0.30, 0.15
-    assert.equal(hits[0].ref, "C002")
+    assert.equal(hits[0].ref, "C2")
     assert.equal(hits[0].relevance, 0.45)
-    assert.equal(hits[1].ref, "AA003")
+    assert.equal(hits[1].ref, "AA3")
     assert.equal(hits[1].relevance, 0.3)
-    assert.equal(hits[2].ref, "B001")
+    assert.equal(hits[2].ref, "B1")
     assert.equal(hits[2].relevance, 0.15)
     // Sanity: strictly descending
     assert.ok(hits[0].relevance > hits[1].relevance)
@@ -293,7 +293,7 @@ test("inactive blocks are skipped during search", async () => {
 
     const hits = parseHits(output)
     assert.equal(hits.length, 1, "only the active block should be searched")
-    assert.equal(hits[0].ref, "C001")
+    assert.equal(hits[0].ref, "C1")
 })
 
 test("custom limit parameter is honored", async () => {

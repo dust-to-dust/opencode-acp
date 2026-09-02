@@ -5,7 +5,11 @@ import type { CompressionBlock } from "../state/types"
 import type { SessionState, WithParts } from "../state"
 import { ensureSessionInitialized } from "../state"
 import { saveSessionState } from "../state/persistence"
-import { assignMessageRefs, formatBlockRef, parseBlockGeneration } from "../message-ids"
+import {
+    assignMessageRefs,
+    formatBlockRef,
+    parseBlockGeneration,
+} from "../message-ids"
 import { syncCompressionBlocks } from "../messages"
 import { getCurrentTokenUsage } from "../token-utils"
 import {
@@ -112,7 +116,7 @@ function resolveSingleBlockTarget(
     if (targetBlockId === null) {
         return {
             ok: false,
-            error: `Error: Invalid checkpoint ID "${blockIdArg}". Use a visible ID such as B001 or C004.`,
+            error: `Error: Invalid checkpoint ID "${blockIdArg}". Use a visible ID such as B1 or C4.`,
         }
     }
 
@@ -219,12 +223,12 @@ The tool returns a condensed preview of the restored content so you can reason a
 TWO MODES:
 
 1. Block mode (default): decompress a single checkpoint by ID.
-   - blockId: checkpoint reference to decompress (e.g., "B001", "C004")
+   - blockId: checkpoint reference to decompress (e.g., "B1", "C4")
 
 2. Range mode: decompress ALL blocks overlapping a message range. Use this to restore
    content across multiple blocks without calling acp_status + decompress repeatedly.
    - startId: starting activity or checkpoint ref (e.g., "A150")
-   - endId: ending activity or checkpoint ref (e.g., "B004")
+    - endId: ending activity or checkpoint ref (e.g., "B4")
 
    Range mode finds every active block whose effectiveMessageIds touch the range and
    batch-restores them. Partial overlap decompresses the whole block (content cannot be
@@ -252,19 +256,19 @@ function buildSchema() {
             .string()
             .optional()
             .describe(
-                'Checkpoint reference to decompress (e.g., "B001", "C004"). Mutually exclusive with startId/endId.',
+                'Checkpoint reference to decompress (e.g., "B1", "C4"). Mutually exclusive with startId/endId.',
             ),
         startId: tool.schema
             .string()
             .optional()
             .describe(
-                'Range start: activity ref (e.g., "A150") or checkpoint ref (e.g., "B002"). Used with endId.',
+                'Range start: activity ref (e.g., "A150") or checkpoint ref (e.g., "B2"). Used with endId.',
             ),
         endId: tool.schema
             .string()
             .optional()
             .describe(
-                'Range end: activity ref (e.g., "A200") or checkpoint ref (e.g., "C005"). Used with startId.',
+                'Range end: activity ref (e.g., "A200") or checkpoint ref (e.g., "C5"). Used with startId.',
             ),
         toFile: tool.schema
             .string()

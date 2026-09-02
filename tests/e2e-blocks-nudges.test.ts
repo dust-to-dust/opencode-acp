@@ -271,8 +271,8 @@ test("block aging: old blocks are NOT deactivated even with modelContextLimit se
         mode: "message",
         topic: "test",
         batchTopic: "test",
-        startId: "A001",
-        endId: "A002",
+        startId: "A1",
+        endId: "A2",
         anchorMessageId: "u2",
         compressMessageId: "msg-comp",
         compressCallId: "call-comp",
@@ -345,8 +345,8 @@ test("oversized block: summary > 6000 chars is NOT truncated below 100% context"
         mode: "message",
         topic: "large-test",
         batchTopic: "large-test",
-        startId: "A001",
-        endId: "A002",
+        startId: "A1",
+        endId: "A2",
         anchorMessageId: "u2",
         compressMessageId: "msg-comp",
         compressCallId: "call-comp",
@@ -410,8 +410,8 @@ test("session switch: each session keeps its own state (no cross-session reset)"
     await handler({}, output1)
 
     assert.equal(state.sessionId, SID_A)
-    assert.equal(state.messageIds.byRawId.get("u1a"), "A001")
-    assert.equal(state.messageIds.byRawId.get("a1a"), "A002")
+    assert.equal(state.messageIds.byRawId.get("u1a"), "A1")
+    assert.equal(state.messageIds.byRawId.get("a1a"), "A2")
 
     // Second call with a DIFFERENT session (session B).
     // Per-session state (#33): session B resolves its own state; session A is
@@ -426,8 +426,8 @@ test("session switch: each session keeps its own state (no cross-session reset)"
 
     // Session A's state is preserved, not reset by session B's activity
     assert.equal(state.sessionId, SID_A)
-    assert.equal(state.messageIds.byRawId.get("u1a"), "A001", "session A IDs preserved")
-    assert.equal(state.messageIds.byRawId.get("a1a"), "A002")
+    assert.equal(state.messageIds.byRawId.get("u1a"), "A1", "session A IDs preserved")
+    assert.equal(state.messageIds.byRawId.get("a1a"), "A2")
 })
 
 // ─── Test: Message IDs injected into tool parts ─────────────────────────────
@@ -461,7 +461,7 @@ test("message ID injection: IDs are appended to tool parts", async () => {
 
     const toolOutput = (tool as any).state.output as string
     assert.ok(toolOutput.includes("dcp-message-id"), "tool output should contain message ID tag")
-    assert.ok(toolOutput.includes("A002"), "tool output should contain the A002 ref")
+    assert.ok(toolOutput.includes("A2"), "tool output should contain the A2 ref")
 })
 
 // ─── Test: Block consumed by newer block ────────────────────────────────────
@@ -482,8 +482,8 @@ test("block consumption: newer block deactivates consumed blocks", async () => {
         mode: "message",
         topic: "old",
         batchTopic: "old",
-        startId: "A001",
-        endId: "A002",
+        startId: "A1",
+        endId: "A2",
         anchorMessageId: "u1",
         compressMessageId: "msg-comp1",
         compressCallId: "call-comp1",
@@ -520,8 +520,8 @@ test("block consumption: newer block deactivates consumed blocks", async () => {
         mode: "message",
         topic: "new",
         batchTopic: "new",
-        startId: "A003",
-        endId: "A004",
+        startId: "A3",
+        endId: "A4",
         anchorMessageId: "u3",
         compressMessageId: "msg-comp2",
         compressCallId: "call-comp2",
@@ -593,8 +593,8 @@ test("ID accumulation: sequential runs never produce duplicate refs", async () =
     assert.equal(new Set(allRefs).size, 10, "all refs should be unique")
 
     assert.equal(state.messageIds.nextRef, 11)
-    assert.equal(state.messageIds.byRawId.get("r4_u1"), "A009")
-    assert.equal(state.messageIds.byRawId.get("r4_a1"), "A010")
+    assert.equal(state.messageIds.byRawId.get("r4_u1"), "A9")
+    assert.equal(state.messageIds.byRawId.get("r4_a1"), "A10")
 })
 
 // ─── Test: Mixed valid and invalid messages ─────────────────────────────────
@@ -620,7 +620,7 @@ test("mixed messages: only valid messages survive, IDs assigned to survivors", a
         .map((m: WithParts) => m.info.id)
     assert.deepEqual(ids, ["u1", "a1", "u2"])
 
-    assert.equal(state.messageIds.byRawId.get("u1"), "A001")
-    assert.equal(state.messageIds.byRawId.get("a1"), "A002")
-    assert.equal(state.messageIds.byRawId.get("u2"), "A003")
+    assert.equal(state.messageIds.byRawId.get("u1"), "A1")
+    assert.equal(state.messageIds.byRawId.get("a1"), "A2")
+    assert.equal(state.messageIds.byRawId.get("u2"), "A3")
 })

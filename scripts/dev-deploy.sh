@@ -5,7 +5,7 @@
 # This is the canonical "one command" for local development:
 #   1. Cleans dist/
 #   2. Builds (tsup bundle + tsc declaration types)
-#   3. Copies dist/ + package.json to the opencode plugin cache
+#   3. Copies dist/ + config/ + package.json to the opencode plugin cache
 #
 # opencode resolves "opencode-acp@latest" to:
 #   ~/.cache/opencode/packages/opencode-acp@latest/node_modules/opencode-acp/
@@ -51,7 +51,21 @@ DEPLOY_TARGET="$HOME/.cache/opencode/packages/opencode-acp@latest/node_modules/o
 # which resolution path the running opencode uses. (See AGENTS.md §3.4.)
 LEGACY_TARGET="$HOME/.cache/opencode/node_modules/opencode-acp"
 
+# User-editable ACM configuration and prompt paths.
+ACM_CONFIG_DIR="$HOME/.config/opencode/acm"
+ACM_PROMPTS_DIR="$ACM_CONFIG_DIR/prompts"
+
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+# Node on Windows does not understand Git Bash paths such as /c/Users/...;
+# convert paths passed through require() when running under Git Bash.
+node_path() {
+    if command -v cygpath &>/dev/null; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -63,6 +77,22 @@ info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 step()  { echo -e "${CYAN}[STEP]${NC} $1"; }
+
+install_runtime_dependencies() {
+    local target="$1"
+
+    step "Installing runtime dependencies in: $target"
+    rm -rf "$target/node_modules"
+    rm -f "$target/package-lock.json" "$target/npm-shrinkwrap.json"
+    (cd "$target" && npm install \
+        --omit=dev \
+        --include=peer \
+        --ignore-scripts \
+        --package-lock=false \
+        --no-audit \
+        --no-fund) \
+        || error "Failed to install runtime dependencies in $target"
+}
 
 # ── Pre-flight checks ─────────────────────────────────────────────────────
 
@@ -112,38 +142,14 @@ else
         || error "dist/ not found — run without --no-build first"
 fi
 
-# ── Step 4: Version guard ─────────────────────────────────────────────────
-# Prevent npm from overwriting local deploys on restart. opencode resolves
-# @latest against the npm registry; if the local cache version is older than
-# npm's latest, opencode re-downloads and overwrites the deploy.
+# ── Step 4: Local development version marker ──────────────────────────────
+# Keep local deployments visibly distinct and newer than registry releases so
+# OpenCode does not replace the development build during startup.
 
-step "Checking version against npm registry..."
-
-LOCAL_VER=$(node -p "require('$PROJECT_ROOT/package.json').version" 2>/dev/null || echo "?")
-NPM_VER=$(npm view opencode-acp version 2>/dev/null || echo "")
-
-if [[ -z "$NPM_VER" ]]; then
-    warn "Could not reach npm registry — skipping version guard"
-    DEPLOY_VER="$LOCAL_VER"
-else
-    DEPLOY_VER=$(node -e "
-        const local = '$LOCAL_VER'.split('.').map(Number);
-        const npm = '$NPM_VER'.split('.').map(Number);
-        const localOlder = local[0] < npm[0]
-            || (local[0] === npm[0] && local[1] < npm[1])
-            || (local[0] === npm[0] && local[1] === npm[1] && local[2] <= npm[2]);
-        if (localOlder) {
-            console.log(npm[0] + '.' + npm[1] + '.' + (npm[2] + 1));
-        } else {
-            console.log('$LOCAL_VER');
-        }
-    ")
-    if [[ "$DEPLOY_VER" != "$LOCAL_VER" ]]; then
-        warn "Local v$LOCAL_VER <= npm v$NPM_VER → bumping deployed version to v$DEPLOY_VER"
-    else
-        info "Local v$LOCAL_VER > npm v$NPM_VER — no bump needed"
-    fi
-fi
+PROJECT_PACKAGE_JSON="$(node_path "$PROJECT_ROOT/package.json")"
+LOCAL_VER=$(ACP_PACKAGE_JSON="$PROJECT_PACKAGE_JSON" node -p "require(process.env.ACP_PACKAGE_JSON).version" 2>/dev/null || echo "?")
+DEPLOY_VER="9.9.9"
+info "Using local development version marker: v$DEPLOY_VER (source: v$LOCAL_VER)"
 
 # ── Step 5: Deploy ────────────────────────────────────────────────────────
 
@@ -156,47 +162,84 @@ fi
 
 info "Deploying version: v$DEPLOY_VER"
 
-# Copy dist/ and package.json
+# Copy the compiled code, package metadata, and file-backed runtime assets.
 cp -r "$PROJECT_ROOT/dist/"* "$DEPLOY_TARGET/dist/"
+rm -rf "$DEPLOY_TARGET/config"
+cp -r "$PROJECT_ROOT/config" "$DEPLOY_TARGET/config"
 cp "$PROJECT_ROOT/package.json" "$DEPLOY_TARGET/package.json"
 
 # Patch version in deployed package.json if bumped (don't touch source tree)
 if [[ "$DEPLOY_VER" != "$LOCAL_VER" ]]; then
-    node -e "
+    ACP_PACKAGE_JSON="$(node_path "$DEPLOY_TARGET/package.json")" node -e "
         const fs = require('fs');
-        const p = '$DEPLOY_TARGET/package.json';
+        const p = process.env.ACP_PACKAGE_JSON;
         const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
         pkg.version = '$DEPLOY_VER';
+        delete pkg.devDependencies;
         fs.writeFileSync(p, JSON.stringify(pkg, null, 4) + '\n');
     "
     info "Patched deployed version to v$DEPLOY_VER"
 fi
 
+install_runtime_dependencies "$DEPLOY_TARGET"
+
 # Verify
-DEPLOYED_VER=$(node -p "require('$DEPLOY_TARGET/package.json').version" 2>/dev/null || echo "?")
+DEPLOYED_PACKAGE_JSON="$(node_path "$DEPLOY_TARGET/package.json")"
+DEPLOYED_VER=$(ACP_PACKAGE_JSON="$DEPLOYED_PACKAGE_JSON" node -p "require(process.env.ACP_PACKAGE_JSON).version" 2>/dev/null || echo "?")
 [[ "$DEPLOYED_VER" == "$DEPLOY_VER" ]] \
     || error "Version mismatch after deploy (expected $DEPLOY_VER, got $DEPLOYED_VER)"
 
 # Sync the legacy resolution path if it exists (see comment on LEGACY_TARGET).
 if [[ -d "$LEGACY_TARGET/dist" ]]; then
     cp -r "$PROJECT_ROOT/dist/"* "$LEGACY_TARGET/dist/"
+    rm -rf "$LEGACY_TARGET/config"
+    cp -r "$PROJECT_ROOT/config" "$LEGACY_TARGET/config"
     cp "$PROJECT_ROOT/package.json" "$LEGACY_TARGET/package.json"
     if [[ "$DEPLOY_VER" != "$LOCAL_VER" ]]; then
-        node -e "
+        ACP_PACKAGE_JSON="$(node_path "$LEGACY_TARGET/package.json")" node -e "
             const fs = require('fs');
-            const p = '$LEGACY_TARGET/package.json';
+            const p = process.env.ACP_PACKAGE_JSON;
             const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
             pkg.version = '$DEPLOY_VER';
+            delete pkg.devDependencies;
             fs.writeFileSync(p, JSON.stringify(pkg, null, 4) + '\n');
         "
     fi
-    LEGACY_VER=$(node -p "require('$LEGACY_TARGET/package.json').version" 2>/dev/null || echo "?")
+    install_runtime_dependencies "$LEGACY_TARGET"
+    LEGACY_PACKAGE_JSON="$(node_path "$LEGACY_TARGET/package.json")"
+    LEGACY_VER=$(ACP_PACKAGE_JSON="$LEGACY_PACKAGE_JSON" node -p "require(process.env.ACP_PACKAGE_JSON).version" 2>/dev/null || echo "?")
     [[ "$LEGACY_VER" == "$DEPLOY_VER" ]] \
         || warn "Legacy path synced but version mismatch (expected $DEPLOY_VER, got $LEGACY_VER)"
     info "Legacy path also synced: v$LEGACY_VER"
 else
     info "No legacy install at $LEGACY_TARGET — skipping sync"
 fi
+
+# ── Step 6: Initialize user-editable ACM files ─────────────────────────────
+# Keep package assets in the plugin cache, but also expose a safe editable copy
+# in the runtime config directory. Never overwrite an existing user file.
+
+step "Initializing ACM config directory: $ACM_CONFIG_DIR"
+mkdir -p "$ACM_PROMPTS_DIR"
+
+if [[ ! -f "$ACM_CONFIG_DIR/acp.jsonc" && ! -f "$ACM_CONFIG_DIR/acp.json" ]]; then
+    cp "$PROJECT_ROOT/config/acp.jsonc" "$ACM_CONFIG_DIR/acp.jsonc"
+    info "Created ACM config: $ACM_CONFIG_DIR/acp.jsonc"
+fi
+
+for prompt_name in \
+    system \
+    compress-range \
+    context-limit-nudge \
+    turn-nudge \
+    iteration-nudge; do
+    prompt_path="$ACM_PROMPTS_DIR/$prompt_name.md"
+    if [[ ! -f "$prompt_path" ]]; then
+        cp "$PROJECT_ROOT/config/prompts/$prompt_name.md" "$prompt_path"
+    fi
+done
+
+info "ACM prompts: $ACM_PROMPTS_DIR"
 
 # ── Done ──────────────────────────────────────────────────────────────────
 
@@ -207,6 +250,11 @@ echo -e "${GREEN}  Path: $DEPLOY_TARGET${NC}"
 echo -e "${GREEN}=========================================${NC}"
 echo ""
 echo "⚠️  Restart opencode for changes to take effect."
+echo ""
+echo "Edit global config:"
+echo "  $ACM_CONFIG_DIR/acp.jsonc"
+echo "Edit global prompts:"
+echo "  $ACM_PROMPTS_DIR/<prompt>.md"
 echo ""
 echo "Verify the deployed bundle has your changes:"
 echo "  grep -c '<your-feature>' $DEPLOY_TARGET/dist/index.js"

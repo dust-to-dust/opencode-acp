@@ -74,16 +74,18 @@ test("mergeCompress preserves explicit false and zero values", () => {
     assert.equal(merged.preserveRecentMessages, 0)
 })
 
-test("getConfig layers global, config-dir, and nearest project overrides", () => {
+test("getConfig layers ACM global and nearest project overrides", () => {
     const root = mkdtempSync(join(tmpdir(), "acp-config-"))
     const globalHome = join(root, "global-home")
-    const globalDir = join(globalHome, "opencode")
+    const globalDir = join(globalHome, ".config", "opencode", "acm")
     const configDir = join(root, "config-dir")
+    const xdgConfigHome = join(root, "xdg-config-home")
     const projectRoot = join(root, "project")
     const projectDirectory = join(projectRoot, "src")
     const projectConfigDir = join(projectRoot, ".opencode")
     mkdirSync(globalDir, { recursive: true })
     mkdirSync(configDir, { recursive: true })
+    mkdirSync(join(xdgConfigHome, "opencode"), { recursive: true })
     mkdirSync(projectDirectory, { recursive: true })
     mkdirSync(projectConfigDir, { recursive: true })
 
@@ -126,6 +128,11 @@ test("getConfig layers global, config-dir, and nearest project overrides", () =>
         "utf8",
     )
     writeFileSync(
+        join(xdgConfigHome, "opencode", "acp.jsonc"),
+        JSON.stringify({ compress: { nudgeGrowthTokens: 400 } }),
+        "utf8",
+    )
+    writeFileSync(
         join(projectConfigDir, "acp.jsonc"),
         JSON.stringify({
             compress: {
@@ -139,36 +146,42 @@ test("getConfig layers global, config-dir, and nearest project overrides", () =>
         "utf8",
     )
 
+    const previousHome = process.env.HOME
+    const previousUserProfile = process.env.USERPROFILE
     const previousConfigHome = process.env.XDG_CONFIG_HOME
     const previousConfigDir = process.env.OPENCODE_CONFIG_DIR
-    process.env.XDG_CONFIG_HOME = globalHome
+    process.env.HOME = globalHome
+    process.env.USERPROFILE = globalHome
+    process.env.XDG_CONFIG_HOME = xdgConfigHome
     process.env.OPENCODE_CONFIG_DIR = configDir
     try {
         const config = getConfig({ directory: projectDirectory } as Parameters<typeof getConfig>[0])
 
         assert.equal(config.compress.showCompression, false)
         assert.equal(config.compress.minNudgeContextPercent, 0)
-        assert.equal(config.compress.nudgeGrowthTokens, 200)
+        assert.equal(config.compress.nudgeGrowthTokens, 100)
         assert.deepEqual(config.compress.providers?.anthropic, {
             nudgeFrequency: 3,
-            minNudgeContextPercent: 7,
             models: {
                 model: {
                     minNudgeContextPercent: 9,
-                    nudgeGrowthTokens: 300,
                     nudgeForce: "strong",
                 },
             },
         })
         assert.deepEqual(config.gc.batchCleanup, {
             lowThreshold: "60%",
-            highThreshold: "80%",
+            highThreshold: "75%",
             forceThreshold: "95%",
         })
-        assert.deepEqual(config.qualityGate.algorithms.custom, { one: 3, two: 2 })
+        assert.deepEqual(config.qualityGate.algorithms.custom, { one: 3 })
         assert.equal(config.messageFilters.filters["omo-context"].enabled, false)
-        assert.equal(config.messageFilters.filters.custom.enabled, false)
+        assert.equal("custom" in config.messageFilters.filters, false)
     } finally {
+        if (previousHome === undefined) delete process.env.HOME
+        else process.env.HOME = previousHome
+        if (previousUserProfile === undefined) delete process.env.USERPROFILE
+        else process.env.USERPROFILE = previousUserProfile
         if (previousConfigHome === undefined) delete process.env.XDG_CONFIG_HOME
         else process.env.XDG_CONFIG_HOME = previousConfigHome
         if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR

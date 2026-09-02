@@ -22,8 +22,8 @@ function makeBlock(
         durationMs: 0,
         tier,
         topic: `block-${id}`,
-        startId: "A001",
-        endId: "A010",
+        startId: "A1",
+        endId: "A10",
         anchorMessageId: `msg-${id}`,
         compressMessageId: `compress-${id}`,
         includedBlockIds: [],
@@ -166,9 +166,9 @@ describe("tier field persistence round-trip", () => {
         assert.equal(loaded.blocksById.get(1)?.tier, 1)
         assert.equal(loaded.blocksById.get(2)?.tier, 4)
         assert.equal(loaded.blocksById.get(3)?.tier, 26)
-        assert.equal(loaded.blocksById.get(1)?.ref, "B001")
-        assert.equal(loaded.blocksById.get(2)?.ref, "E002")
-        assert.equal(loaded.blocksById.get(3)?.ref, "AA003")
+        assert.equal(loaded.blocksById.get(1)?.ref, "B1")
+        assert.equal(loaded.blocksById.get(2)?.ref, "E2")
+        assert.equal(loaded.blocksById.get(3)?.ref, "AA3")
     })
 
     it("defaults missing tier to undefined (treated as tier 1 by consumers)", () => {

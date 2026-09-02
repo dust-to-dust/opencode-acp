@@ -1082,19 +1082,14 @@ function findOpencodeDir(startDir: string): string | null {
 
 function getConfigPaths(ctx: PluginInput): {
     global: string | null
-    configDir: string | null
     project: string | null
     globalDir: string
 } {
-    const configHome = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
-    const globalDir = join(configHome, "opencode")
+    const globalDir = join(homedir(), ".config", "opencode", "acm")
     const global = selectConfigFile(globalDir)
-    const configDir = process.env.OPENCODE_CONFIG_DIR
-        ? selectConfigFile(process.env.OPENCODE_CONFIG_DIR)
-        : null
     const opencodeDir = findOpencodeDir(ctx.directory)
     const project = opencodeDir ? selectConfigFile(opencodeDir) : null
-    return { global, configDir, project, globalDir }
+    return { global, project, globalDir }
 }
 
 function createDefaultConfig(globalDir: string): void {
@@ -1129,8 +1124,7 @@ export function getConfig(ctx: PluginInput): PluginConfig {
     if (!configPaths.global) createDefaultConfig(configPaths.globalDir)
 
     const layers: Array<{ path: string | null; name: string; isProject: boolean }> = [
-        { path: configPaths.global, name: "config", isProject: false },
-        { path: configPaths.configDir, name: "configDir config", isProject: true },
+        { path: configPaths.global, name: "global config", isProject: false },
         { path: configPaths.project, name: "project config", isProject: true },
     ]
 

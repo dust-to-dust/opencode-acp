@@ -244,13 +244,12 @@ ACP provides an `/acp` slash command (also accepts `/dcp` for backward compatibi
 
 ## Configuration
 
-ACP uses its own config file, searched in order:
+ACP loads its bundled defaults, then applies user overrides in this order:
 
-1. **Global:** `~/.config/opencode/acp.jsonc` (or `acp.json`), created automatically on first run
-2. **Custom config directory:** `$OPENCODE_CONFIG_DIR/acp.jsonc` (or `acp.json`), if `OPENCODE_CONFIG_DIR` is set
-3. **Project:** `.opencode/acp.jsonc` (or `acp.json`) in your project's `.opencode` directory
+1. **Global:** `~/.config/opencode/acm/acp.jsonc` (or `acp.json`), created automatically on first run
+2. **Project:** `.opencode/acp.jsonc` (or `acp.json`) in the project `.opencode` directory
 
-Each level overrides the previous, so project settings take priority over global. Restart OpenCode after making config changes.
+Project settings take priority over global. Restart OpenCode after making config changes.
 
 > **📖 Full parameter reference:** See [CONFIGURATION.md](./CONFIGURATION.md) for a complete reference of every configurable parameter with type, default value, and description.
 
@@ -304,8 +303,8 @@ Each level overrides the previous, so project settings take priority over global
     "allowSubAgents": true,
     // Experimental settings
     "experimental": {
-        // Enable user-editable prompt overrides under dcp-prompts directories
-        // When false (default), prompt override files/directories are ignored
+        // Enable user-editable prompt files under the acm/prompts directory
+        // When false (default), prompt files are ignored
         "customPrompts": false,
     },
     // Protect file operations from pruning via glob patterns
@@ -442,7 +441,7 @@ Any `compress` field can be overridden per provider and per model via the nested
 }
 ```
 
-Resolution is **per field**: model > provider > global. Unknown provider/model IDs fall back to the global value. A nested `maxContextLimit` also wins over the legacy flat `modelMaxLimits` map. Overrides deep-merge across the three config layers (global → config dir → project) per provider/model key.
+Resolution is **per field**: model > provider > global. Unknown provider/model IDs fall back to the global value. A nested `maxContextLimit` also wins over the legacy flat `modelMaxLimits` map. Overrides deep-merge across the two config layers (global → project) per provider/model key.
 
 Not overridable here: `permission`, the deprecated `minContextLimit` / `modelMinLimits` family, and the flat `modelMaxLimits` / `modelMinLimits` maps themselves. Note: `modelMaxLimits` is **not** deprecated — it stays fully supported; a nested `maxContextLimit` simply outranks it.
 
@@ -450,22 +449,21 @@ See the [`compress.providers`](./CONFIGURATION.md#compressproviders) reference i
 
 ### Prompt Overrides
 
-ACP exposes six editable prompts:
+ACP exposes five editable prompts:
 
 - `system`
 - `compress-range`
-- `compress-message`
 - `context-limit-nudge`
 - `turn-nudge`
 - `iteration-nudge`
 
 This feature is disabled by default. Set `experimental.customPrompts` to `true` in your ACP config to activate it.
 
-When enabled, managed defaults are written to `~/.config/opencode/acp-prompts/defaults/` as plain-text prompt files. A single `README.md` in that directory explains each prompt and how to create overrides.
+When enabled, managed prompt files are written to `~/.config/opencode/acm/prompts/` as plain text. A single `README.md` in that directory explains each prompt.
 
-To customize behavior, add a file with the same name under an overrides directory and edit it as plain text.
+To customize behavior globally, edit the matching file under `~/.config/opencode/acm/prompts/`. For a project-only override, add it under `.opencode/prompts/` in the project root. Project overrides take priority over global prompts.
 
-To reset an override, delete the matching file from your overrides directory.
+To reset a global prompt, delete the matching file from `~/.config/opencode/acm/prompts/`. To reset a project prompt, delete it from `.opencode/prompts/`.
 
 ### Protected Tools
 
@@ -484,8 +482,8 @@ ACP is a drop-in replacement for DCP. To migrate:
 
 1. Remove the old DCP plugin from your `opencode.json`
 2. Install ACP: `opencode plugin opencode-acp@stable --global`
-3. Copy your config: `cp ~/.config/opencode/dcp.jsonc ~/.config/opencode/acp.jsonc`
-4. Copy prompt overrides (if any): `cp -r ~/.config/opencode/dcp-prompts ~/.config/opencode/acp-prompts`
+3. Copy your config to `~/.config/opencode/acm/acp.jsonc` (old config files are not migrated automatically)
+4. Copy prompt overrides (if any) to `~/.config/opencode/acm/prompts/`
 5. Copy session state (optional, preserves compression blocks): `cp -r ~/.local/share/opencode/storage/plugin/dcp ~/.local/share/opencode/storage/plugin/acp`
 6. Restart OpenCode
 

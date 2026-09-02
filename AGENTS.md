@@ -1,7 +1,6 @@
 # Development Specification
 
 > This file is the always-loaded project contract. Follow it for every change.
-> 在存在规则冲突时，提醒用户，并以用户最新指令为准
 
 ## 1. Scope and Source of Truth
 
@@ -25,6 +24,7 @@ Task-specific references (read only when relevant):
 
 ## 2. Non-Negotiable Runtime Invariants
 
+- 发给大模型的上下文中，赋予编号后恒定不可修改
 - Preserve the message-transform pipeline order unless the dependency between every affected step is understood and tested. The broad order is: resolve session state, update turn state, clean stale references, assign activity references, sync checkpoints, run GC, prune, inject semantic compression nudges, inject IDs, then strip stale metadata.
 - Session state is per session and includes compression blocks, nudge state, token statistics, raw-ID/reference mappings, timing, and tool-parameter caches. Persistence and state mutations must not lose existing data.
 - Protected tools, protected file patterns, protected user messages, and other configured protected content must not be accidentally pruned. Protected tool messages must be hard-excluded from semantic candidate sets, not merely mentioned in checkpoint summaries.

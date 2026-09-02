@@ -1,11 +1,11 @@
 import type { SessionState, WithParts } from "./state"
 import { isIgnoredUserMessage, messageHasCompressAttempt } from "./messages/query"
 
-const MESSAGE_REF_REGEX = /^a(\d{3,})$/
-const BLOCK_REF_REGEX = /^((?:[b-z]|[a-z]{2,}))(\d{3,})$/
+// Model-facing references are deliberately not compatible with the old padded form.
+const MESSAGE_REF_REGEX = /^a([1-9]\d*)$/
+const BLOCK_REF_REGEX = /^((?:[b-z]|[a-z]{2,}))([1-9]\d*)$/
 const MESSAGE_ID_TAG_NAME = "dcp-message-id"
 
-const REF_WIDTH = 3
 const MESSAGE_REF_MIN_INDEX = 1
 const MESSAGE_REF_MAX_INDEX = 99999
 
@@ -31,7 +31,7 @@ export function formatMessageRef(index: number): string {
             `Message ID index out of bounds: ${index}. Supported range is ${MESSAGE_REF_MIN_INDEX}-${MESSAGE_REF_MAX_INDEX}.`,
         )
     }
-    return `A${index.toString().padStart(REF_WIDTH, "0")}`
+    return `A${index}`
 }
 
 export function formatBlockRef(blockId: number, tier = 1): string {
@@ -41,7 +41,7 @@ export function formatBlockRef(blockId: number, tier = 1): string {
     if (!Number.isInteger(tier) || tier < 1) {
         throw new Error(`Invalid compression generation: ${tier}`)
     }
-    return `${formatGenerationLabel(tier)}${blockId.toString().padStart(REF_WIDTH, "0")}`
+    return `${formatGenerationLabel(tier)}${blockId}`
 }
 
 /** A is raw activity (level 0), B is one compression, C is two, and so on. */
@@ -98,7 +98,7 @@ export function parseBlockRef(ref: string): number | null {
         return null
     }
     const id = Number.parseInt(match[2], 10)
-    return Number.isInteger(id) ? id : null
+    return Number.isInteger(id) && id >= 1 ? id : null
 }
 
 export function parseBlockGeneration(ref: string): number | null {
@@ -267,10 +267,21 @@ export function assignMessageRefs(state: SessionState, messages: WithParts[]): n
             allocateNextMessageRef(state)
 
         for (const message of group) {
-            if (!state.messageIds.byRawId.has(message.info.id)) assigned++
-            state.messageIds.byRawId.set(message.info.id, ref)
+            const rawMessageId = message.info.id
+            const existingRef = state.messageIds.byRawId.get(rawMessageId)
+            const stableRef = existingRef ?? ref
+
+            if (existingRef === undefined) {
+                assigned++
+                state.messageIds.byRawId.set(rawMessageId, stableRef)
+            }
+
+            // A ref is an immutable identity. In particular, do not replace the
+            // representative when a tool activity is reloaded after pruning.
+            if (!state.messageIds.byRef.has(stableRef)) {
+                state.messageIds.byRef.set(stableRef, rawMessageId)
+            }
         }
-        state.messageIds.byRef.set(ref, group[0]!.info.id)
     }
 
     return assigned
@@ -291,6 +302,6 @@ function allocateNextMessageRef(state: SessionState): string {
     }
 
     throw new Error(
-        `Message ID alias capacity exceeded. Cannot allocate more than ${formatMessageRef(MESSAGE_REF_MAX_INDEX)} aliases in this session.`,
+        `Message ID capacity exceeded. Cannot allocate more than ${formatMessageRef(MESSAGE_REF_MAX_INDEX)} references in this session.`,
     )
 }

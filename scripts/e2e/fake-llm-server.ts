@@ -38,6 +38,7 @@ export interface RequestObservation {
     messageCount: number
     compressCallCount: number
     nudgeDetected: boolean
+    lastUserTextTail: string
     isChild: boolean
     isAuxiliary: boolean
 }
@@ -116,6 +117,7 @@ async function handleChatCompletion(req: Request): Promise<Response> {
         messageCount: messages.length,
         compressCallCount: countCompressCalls(messages),
         nudgeDetected: pendingCandidates.length > 0,
+        lastUserTextTail: findLastUserText(messages).slice(-2000),
         isChild,
         isAuxiliary: tools.length === 0,
     })
@@ -239,7 +241,7 @@ function parsePendingCandidates(messages: any[]): string[] {
     for (let index = messages.length - 1; index >= 0; index--) {
         const message = messages[index]
         if (message?.role !== "user") continue
-        const text = extractMessageText(message)
+        const text = extractMessageText(message).replace(/\r\n?/g, "\n")
         if (!text.includes("[ACP compression required]")) continue
         const match = text.match(/Eligible blocks \(oldest first\):\n([\s\S]*?)\nCache boundary:/)
         if (!match) return []
@@ -268,6 +270,13 @@ function extractMessageText(message: any): string {
         }
     }
     return parts.join("")
+}
+
+function findLastUserText(messages: any[]): string {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if (messages[index]?.role === "user") return extractMessageText(messages[index])
+    }
+    return ""
 }
 
 function countCompressCalls(messages: any[]): number {

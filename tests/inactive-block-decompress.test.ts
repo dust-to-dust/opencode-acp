@@ -30,8 +30,8 @@ function makeBlock(overrides: Partial<CompressionBlock> = {}): CompressionBlock 
         mode: "range",
         topic: "test",
         batchTopic: "test",
-        startId: "A001",
-        endId: "A003",
+        startId: "A1",
+        endId: "A3",
         anchorMessageId: "anchor-1",
         compressMessageId: "comp-1",
         compressCallId: undefined,
@@ -172,10 +172,10 @@ test("E2E: decompress rejects the right numeric ID with the wrong generation", a
     const inactiveBlock = makeBlock({ blockId: 5, tier: 26, active: false })
     const state = makeState([inactiveBlock], [])
 
-    assert.equal(inactiveBlock.ref, "AA005")
+    assert.equal(inactiveBlock.ref, "AA5")
     assert.equal(
-        await runDecompress(state, { blockId: "Z005" }),
-        "Error: Checkpoint Z005 does not exist.",
+        await runDecompress(state, { blockId: "Z5" }),
+        "Error: Checkpoint Z5 does not exist.",
     )
 })
 
@@ -190,7 +190,7 @@ test("E2E: decompress tool redirects for consumed checkpoint with active parent"
 
     const result = await runDecompress(state, { blockId: consumedBlock.ref })
 
-    assert.match(result, /Checkpoint B005 is nested inside active checkpoint C010/)
+    assert.match(result, /Checkpoint B5 is nested inside active checkpoint C10/)
     assert.match(result, /Decompress the active checkpoint first/)
 })
 
