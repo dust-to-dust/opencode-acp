@@ -27,12 +27,9 @@ import {
 } from "../utils"
 import {
     computeProtectedRefs,
-    computeShouldNudge,
     getModelInfo,
     isContextOverLimits,
     DEFAULT_NUDGE_GROWTH_TOKENS,
-    DEFAULT_MIN_NUDGE_CONTEXT_PERCENT,
-    resolveMinNudgeContextPercent,
     resolveMinNudgeFloorTokens,
     applyCompressOverrides,
 } from "./utils"
@@ -72,7 +69,7 @@ export const injectCompressNudges = (
 
     const { providerId, modelId } = getModelInfo(messages)
     config = applyCompressOverrides(config, providerId, modelId)
-    const { overMaxLimit, overMinLimit, currentTokens, modelContextLimit } = isContextOverLimits(
+    const { overMaxLimit, currentTokens, modelContextLimit } = isContextOverLimits(
         config,
         state,
         providerId,
@@ -80,10 +77,6 @@ export const injectCompressNudges = (
         messages,
     )
     const nudgeGrowthTokens = config.compress?.nudgeGrowthTokens ?? DEFAULT_NUDGE_GROWTH_TOKENS
-    const growthFloor = Math.max(
-        config.compress.minNudgeGrowthFloor,
-        config.compress.minNudgeGrowthRatio * nudgeGrowthTokens,
-    )
     const emergencyThreshold = resolveEmergencyThreshold(config, modelContextLimit)
     const emergencyOverride =
         emergencyThreshold !== undefined &&
@@ -125,35 +118,34 @@ export const injectCompressNudges = (
         currentTokens < state.nudges.lastPerMessageNudgeTokens - nudgeGrowthTokens
     ) {
         state.nudges.lastPerMessageNudgeTokens = currentTokens
+        state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
         state.nudges.lastNudgeShownTokens = undefined
         stateChanged = true
     }
 
     if (state.nudges.lastPerMessageNudgeTokens === undefined && currentTokens !== undefined) {
         state.nudges.lastPerMessageNudgeTokens = currentTokens
+        state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
         state.nudges.shouldInjectThisTurn = false
         saveSessionState(state, logger).catch(() => {})
         return
     }
 
-    const growthReference = state.nudges.lastPerMessageNudgeTokens
+    if (state.nudges.lastCompressibleNudgeTokens === undefined) {
+        // Older persisted sessions have no eligible-content baseline. Treat
+        // their currently visible candidates as newly observed content.
+        state.nudges.lastCompressibleNudgeTokens = 0
+        stateChanged = true
+    }
 
-    const decision = computeShouldNudge({
-        currentTokens,
-        modelContextLimit,
-        overMinLimit,
-        overMaxLimit,
-        lastNudgeTokens: growthReference,
-        minNudgeContextPercent:
-            resolveMinNudgeContextPercent(config, providerId, modelId) ??
-            DEFAULT_MIN_NUDGE_CONTEXT_PERCENT,
-        nudgeGrowthTokens,
-    })
+    if (candidateResult.tokens < state.nudges.lastCompressibleNudgeTokens) {
+        state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
+        stateChanged = true
+    }
 
-    const growthSinceBaseline =
-        currentTokens !== undefined && growthReference !== undefined
-            ? currentTokens - growthReference
-            : undefined
+    const compressibleGrowth =
+        candidateResult.tokens - state.nudges.lastCompressibleNudgeTokens
+    const growthThresholdMet = compressibleGrowth > 0 && compressibleGrowth >= nudgeGrowthTokens
     const minNudgeFloorTokens = resolveMinNudgeFloorTokens(
         config,
         modelContextLimit,
@@ -166,10 +158,9 @@ export const injectCompressNudges = (
         currentTokens >= minNudgeFloorTokens
     const nudgeAllowed =
         emergencyOverride ||
-        (decision.shouldNudge &&
+        (growthThresholdMet &&
             (overMaxLimit || overMinNudgeFloor) &&
-            growthSinceBaseline !== undefined &&
-            growthSinceBaseline >= growthFloor)
+            candidateResult.tokens > 0)
 
     const meetsMinimum =
         config.compress.minCompressRange <= 0 ||
@@ -215,7 +206,7 @@ export function buildCompressionCandidates(
     config: PluginConfig,
     messages: WithParts[],
     protectedRefs: Set<string>,
-): { refs: string[]; characters: number } {
+): { refs: string[]; characters: number; tokens: number } {
     const firstUserId = messages.find(
         (message) => message.info.role === "user" && !isIgnoredUserMessage(message),
     )?.info.id
@@ -224,7 +215,13 @@ export function buildCompressionCandidates(
     )?.info.id
     const groupedActivities = new Map<
         string,
-        { ref: string; time: number; characters: number; visible: boolean; blocked: boolean }
+        {
+            ref: string
+            time: number
+            characters: number
+            visible: boolean
+            blocked: boolean
+        }
     >()
 
     for (const message of messages) {
@@ -297,6 +294,9 @@ export function buildCompressionCandidates(
     return {
         refs: entries.map((entry) => entry.ref),
         characters: entries.reduce((total, entry) => total + entry.characters, 0),
+        tokens: Math.round(
+            entries.reduce((total, entry) => total + entry.characters, 0) / 4,
+        ),
     }
 }
 

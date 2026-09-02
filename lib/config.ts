@@ -23,18 +23,18 @@ export interface CompressConfig {
     modelMinLimits?: Record<string, Limit>
     /** Nested per-provider / per-model overrides, resolved field-by-field. */
     providers?: Record<string, CompressProviderOverrides>
-    nudgeFrequency: number
     minNudgeContextPercent: number
     nudgeGrowthTokens?: number
     toolOutputNudgeThreshold?: number
-    iterationNudgeThreshold: number
     nudgeForce: "strong" | "soft"
     protectedTools: string[]
     protectTags: boolean
     protectUserMessages: boolean
     maxSummaryLengthHard: number
     minCompressRange: number
+    /** @deprecated Retained for config compatibility; no longer affects nudge cadence. */
     minNudgeGrowthRatio: number
+    /** @deprecated Retained for config compatibility; no longer affects nudge cadence. */
     minNudgeGrowthFloor: number
     emergencyThresholdPercent: Limit
     maxVisibleSegments: number
@@ -214,10 +214,8 @@ function isCompress(value: unknown): value is CompressConfig {
         typeof value.summaryBuffer === "boolean" &&
         isNumberOrPercent(value.maxContextLimit) &&
         isNumberOrPercent(value.minContextLimit) &&
-        typeof value.nudgeFrequency === "number" &&
         typeof value.minNudgeContextPercent === "number" &&
         (value.nudgeGrowthTokens === undefined || typeof value.nudgeGrowthTokens === "number") &&
-        typeof value.iterationNudgeThreshold === "number" &&
         (value.nudgeForce === "strong" || value.nudgeForce === "soft") &&
         isStringArray(value.protectedTools) &&
         typeof value.protectTags === "boolean" &&
@@ -350,11 +348,6 @@ function parseModelOverrides(value: unknown): CompressModelOverrides | undefined
     )
     assignIfDefined(
         result,
-        "nudgeFrequency",
-        readProperty(value, "nudgeFrequency", (v): v is number => typeof v === "number"),
-    )
-    assignIfDefined(
-        result,
         "minNudgeContextPercent",
         readProperty(value, "minNudgeContextPercent", (v): v is number => typeof v === "number"),
     )
@@ -367,11 +360,6 @@ function parseModelOverrides(value: unknown): CompressModelOverrides | undefined
         result,
         "toolOutputNudgeThreshold",
         readProperty(value, "toolOutputNudgeThreshold", (v): v is number => typeof v === "number"),
-    )
-    assignIfDefined(
-        result,
-        "iterationNudgeThreshold",
-        readProperty(value, "iterationNudgeThreshold", (v): v is number => typeof v === "number"),
     )
     assignIfDefined(
         result,
@@ -787,12 +775,10 @@ export function mergeCompress(base: CompressConfig, override?: CompressOverride)
         modelMaxLimits: override.modelMaxLimits ?? base.modelMaxLimits,
         modelMinLimits: override.modelMinLimits ?? base.modelMinLimits,
         providers: mergeProviderOverrides(base.providers, override.providers),
-        nudgeFrequency: override.nudgeFrequency ?? base.nudgeFrequency,
         minNudgeContextPercent: override.minNudgeContextPercent ?? base.minNudgeContextPercent,
         nudgeGrowthTokens: override.nudgeGrowthTokens ?? base.nudgeGrowthTokens,
         toolOutputNudgeThreshold:
             override.toolOutputNudgeThreshold ?? base.toolOutputNudgeThreshold,
-        iterationNudgeThreshold: override.iterationNudgeThreshold ?? base.iterationNudgeThreshold,
         nudgeForce: override.nudgeForce ?? base.nudgeForce,
         protectedTools: Array.isArray(override.protectedTools)
             ? [...new Set([...override.protectedTools, ...FORCE_COMPRESS_PROTECTED])]

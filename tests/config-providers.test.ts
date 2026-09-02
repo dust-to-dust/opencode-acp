@@ -24,7 +24,6 @@ const base: CompressConfig = {
     summaryBuffer: true,
     maxContextLimit: "55%",
     minContextLimit: "45%",
-    nudgeFrequency: 5,
     minNudgeContextPercent: 15,
     nudgeGrowthTokens: 50_000,
     toolOutputNudgeThreshold: 20_000,
@@ -98,7 +97,6 @@ test("getConfig layers ACM global and nearest project overrides", () => {
                 nudgeGrowthTokens: 100,
                 providers: {
                     anthropic: {
-                        nudgeFrequency: 3,
                         models: { model: { minNudgeContextPercent: 9 } },
                     },
                 },
@@ -161,7 +159,6 @@ test("getConfig layers ACM global and nearest project overrides", () => {
         assert.equal(config.compress.minNudgeContextPercent, 0)
         assert.equal(config.compress.nudgeGrowthTokens, 100)
         assert.deepEqual(config.compress.providers?.anthropic, {
-            nudgeFrequency: 3,
             models: {
                 model: {
                     minNudgeContextPercent: 9,
@@ -422,25 +419,22 @@ test("all-field cascade: provider fields apply to every field, model fields win 
         ...base,
         providers: {
             anthropic: {
-                nudgeFrequency: 3,
                 minNudgeContextPercent: 8,
                 nudgeForce: "strong",
                 models: {
-                    "claude-sonnet-4-6": { nudgeFrequency: 1, summaryBuffer: false },
+                    "claude-sonnet-4-6": { summaryBuffer: false },
                 },
             },
         },
     })
-    // Model level: model wins on nudgeFrequency, inherits provider on the rest.
+    // Model level: model wins on summaryBuffer, inherits provider on the rest.
     assert.deepEqual(resolveCompressOverrides(config, "anthropic", "claude-sonnet-4-6"), {
-        nudgeFrequency: 1,
         minNudgeContextPercent: 8,
         nudgeForce: "strong",
         summaryBuffer: false,
     })
     // Sibling model: provider fields only.
     assert.deepEqual(resolveCompressOverrides(config, "anthropic", "claude-haiku-4-5"), {
-        nudgeFrequency: 3,
         minNudgeContextPercent: 8,
         nudgeForce: "strong",
     })
@@ -450,7 +444,10 @@ test("all-field cascade: provider fields apply to every field, model fields win 
 })
 
 test("all-field cascade: applyCompressOverrides is identity when nothing applies", () => {
-    const config = pluginConfig({ ...base, providers: { anthropic: { nudgeFrequency: 3 } } })
+    const config = pluginConfig({
+        ...base,
+        providers: { anthropic: { minNudgeContextPercent: 8 } },
+    })
     // Unknown provider → same reference, zero allocation.
     assert.equal(applyCompressOverrides(config, "openai", "gpt-5"), config)
     assert.equal(applyCompressOverrides(config, undefined), config)
@@ -460,11 +457,9 @@ test("all-field cascade: applyCompressOverrides swaps fields but never maxContex
     const config = pluginConfig({
         ...base,
         maxContextLimit: "55%",
-        nudgeFrequency: 5,
         providers: {
             anthropic: {
                 maxContextLimit: "30%", // must NOT be blanket-applied (explicit path below)
-                nudgeFrequency: 2,
                 protectedTools: ["skill", "task"],
                 models: { "claude-sonnet-4-6": { nudgeGrowthTokens: 10000 } },
             },
@@ -472,14 +467,12 @@ test("all-field cascade: applyCompressOverrides swaps fields but never maxContex
     })
     const applied = applyCompressOverrides(config, "anthropic", "claude-sonnet-4-6")
     assert.notEqual(applied, config)
-    assert.equal(applied.compress.nudgeFrequency, 2)
     assert.deepEqual(applied.compress.protectedTools, ["skill", "task"])
     assert.equal(applied.compress.nudgeGrowthTokens, 10000)
     // maxContextLimit is excluded from the blanket swap — it flows through
     // resolveContextTokenLimit's explicit precedence chain instead.
     assert.equal(applied.compress.maxContextLimit, "55%")
     // The input config is never mutated.
-    assert.equal(config.compress.nudgeFrequency, 5)
     assert.equal(config.compress.nudgeGrowthTokens, 50_000)
 })
 
@@ -526,8 +519,6 @@ test("providers: multi-field validation accepts every overridable field type", (
                     maxContextLimit: "60%",
                     emergencyThresholdPercent: "95%",
                     minNudgeContextPercent: 7,
-                    nudgeFrequency: 3,
-                    iterationNudgeThreshold: 10,
                     toolOutputNudgeThreshold: 8000,
                     nudgeGrowthTokens: 40000,
                     minNudgeGrowthRatio: 0.5,
@@ -541,7 +532,7 @@ test("providers: multi-field validation accepts every overridable field type", (
                     preserveRecentMessages: 30,
                     preserveRecentTokens: 25000,
                     models: {
-                        "claude-sonnet-4-6": { nudgeFrequency: 2, nudgeForce: "soft" },
+                        "claude-sonnet-4-6": { nudgeForce: "soft" },
                     },
                 },
             },
@@ -563,9 +554,6 @@ test("providers: multi-field validation rejects wrong-typed values at both level
     ])
     assert.deepEqual(keys({ anthropic: { protectedTools: ["ok", 5] } }), [
         "compress.providers.anthropic.protectedTools",
-    ])
-    assert.deepEqual(keys({ anthropic: { nudgeFrequency: 0 } }), [
-        "compress.providers.anthropic.nudgeFrequency",
     ])
     assert.deepEqual(keys({ anthropic: { nudgeGrowthTokens: -1 } }), [
         "compress.providers.anthropic.nudgeGrowthTokens",

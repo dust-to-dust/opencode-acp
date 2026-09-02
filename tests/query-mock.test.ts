@@ -122,8 +122,6 @@ function makeConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
             summaryBuffer: true,
             maxContextLimit: "55%",
             minContextLimit: "45%",
-            nudgeFrequency: 5,
-            iterationNudgeThreshold: 15,
             nudgeForce: "soft",
             protectedTools: [],
             protectTags: false,

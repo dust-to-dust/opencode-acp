@@ -133,7 +133,7 @@
                     "description": "When enabled, active summary tokens extend the effective maxContextLimit used for context-limit nudges."
                 },
                 "maxContextLimit": {
-                    "description": "Soft upper threshold. Above this, DCP keeps sending strong compression nudges (based on nudgeFrequency), so the model is pushed to compress. Accepts number or \"X%\" of the model context window.",
+                    "description": "Soft upper threshold. Above this, ACP requests compression when enough eligible content has accumulated. Accepts number or \"X%\" of the model context window.",
                     "default": 100000,
                     "oneOf": [
                         {
@@ -187,18 +187,6 @@
                             }
                         ]
                     }
-                },
-                "nudgeFrequency": {
-                    "type": "number",
-                    "default": 5,
-                    "minimum": 1,
-                    "description": "How often the context-limit nudge fires when above maxContextLimit (1 = every fetch, 5 = every 5th fetch)"
-                },
-                "iterationNudgeThreshold": {
-                    "type": "number",
-                    "default": 15,
-                    "minimum": 1,
-                    "description": "How many messages to wait after a user message before adding compression reminders."
                 },
                 "nudgeForce": {
                     "type": "string",
@@ -265,16 +253,6 @@
                                 "maximum": 100,
                                 "description": "Growth-nudge floor percent, resolved against the active model's context window (0 disables the floor)."
                             },
-                            "nudgeFrequency": {
-                                "type": "number",
-                                "minimum": 1,
-                                "description": "Override for the context-limit nudge frequency."
-                            },
-                            "iterationNudgeThreshold": {
-                                "type": "number",
-                                "minimum": 1,
-                                "description": "Override for the iteration nudge threshold."
-                            },
                             "toolOutputNudgeThreshold": {
                                 "type": "number",
                                 "minimum": 0,
@@ -283,18 +261,18 @@
                             "nudgeGrowthTokens": {
                                 "type": "number",
                                 "minimum": 0,
-                                "description": "Override for the per-message nudge growth threshold (absolute tokens)."
+                                "description": "Override for the eligible-content nudge growth threshold (absolute tokens)."
                             },
                             "minNudgeGrowthRatio": {
                                 "type": "number",
                                 "minimum": 0,
                                 "maximum": 1,
-                                "description": "Override for the growth ratio (× nudgeGrowthTokens)."
+                                "description": "Deprecated compatibility override; no longer adds a second growth floor."
                             },
                             "minNudgeGrowthFloor": {
                                 "type": "number",
                                 "minimum": 0,
-                                "description": "Override for the absolute growth floor (tokens)."
+                                "description": "Deprecated compatibility override; no longer adds a second growth floor."
                             },
                             "nudgeForce": {
                                 "type": "string",
@@ -397,16 +375,6 @@
                                             "maximum": 100,
                                             "description": "Growth-nudge floor percent, resolved against the active model's context window (0 disables the floor)."
                                         },
-                                        "nudgeFrequency": {
-                                            "type": "number",
-                                            "minimum": 1,
-                                            "description": "Override for the context-limit nudge frequency."
-                                        },
-                                        "iterationNudgeThreshold": {
-                                            "type": "number",
-                                            "minimum": 1,
-                                            "description": "Override for the iteration nudge threshold."
-                                        },
                                         "toolOutputNudgeThreshold": {
                                             "type": "number",
                                             "minimum": 0,
@@ -415,18 +383,18 @@
                                         "nudgeGrowthTokens": {
                                             "type": "number",
                                             "minimum": 0,
-                                            "description": "Override for the per-message nudge growth threshold (absolute tokens)."
+                                            "description": "Override for the eligible-content nudge growth threshold (absolute tokens)."
                                         },
                                         "minNudgeGrowthRatio": {
                                             "type": "number",
                                             "minimum": 0,
                                             "maximum": 1,
-                                            "description": "Override for the growth ratio (× nudgeGrowthTokens)."
+                                            "description": "Deprecated compatibility override; no longer adds a second growth floor."
                                         },
                                         "minNudgeGrowthFloor": {
                                             "type": "number",
                                             "minimum": 0,
-                                            "description": "Override for the absolute growth floor (tokens)."
+                                            "description": "Deprecated compatibility override; no longer adds a second growth floor."
                                         },
                                         "nudgeForce": {
                                             "type": "string",
@@ -517,7 +485,7 @@
                 },
                 "nudgeGrowthTokens": {
                     "type": "number",
-                    "description": "Token growth required between per-message nudges (absolute, not percentage). Shows Tips only after context grows by this many tokens. If unset, fixed default 50000 (uniform for all models). Also drives T2/T3 tier triggers and the growthFloor anti-thrash gate (0.45 × this value)."
+                    "description": "Eligible content token growth required between compression requests. The threshold is measured from content that is currently eligible for pruning, not total context growth. If unset, the fixed default is 50000 tokens."
                 },
                 "toolOutputNudgeThreshold": {
                     "type": "number",
@@ -534,18 +502,18 @@
                     "default": 0.45,
                     "minimum": 0,
                     "maximum": 1,
-                    "description": "Fraction of nudgeGrowthTokens that must accumulate before a compress nudge fires. Combined with minNudgeGrowthFloor: growthFloor = max(minNudgeGrowthFloor, minNudgeGrowthRatio × nudgeGrowthTokens). Only bypassed when context usage >= emergencyThresholdPercent."
+                    "description": "Deprecated compatibility setting. It no longer adds a second growth floor; use nudgeGrowthTokens to set the eligible-content growth threshold."
                 },
                 "minNudgeGrowthFloor": {
                     "type": "number",
                     "default": 5000,
                     "minimum": 0,
-                    "description": "Absolute floor for nudge growth threshold (in tokens). Prevents small-context models from having an excessively low growth floor. See minNudgeGrowthRatio."
+                    "description": "Deprecated compatibility setting. It no longer adds a second growth floor; use nudgeGrowthTokens to set the eligible-content growth threshold."
                 },
                 "emergencyThresholdPercent": {
                     "type": ["number", "string"],
                     "default": "98%",
-                    "description": "Context usage threshold at which the growth floor is bypassed and nudges fire unconditionally (emergency override). Accepts absolute token count or percentage string (e.g. \"98%\")."
+                    "description": "Context usage threshold for the emergency compression path. Accepts absolute token count or percentage string (e.g. \"98%\")."
                 },
                 "lastSegmentSoftBlock": {
                     "type": "boolean",
@@ -576,9 +544,7 @@
                 "summaryBuffer": true,
                 "maxContextLimit": 100000,
                 "minContextLimit": 50000,
-                "nudgeFrequency": 5,
-                "iterationNudgeThreshold": 15,
-                "nudgeForce": "soft",
+                    "nudgeForce": "soft",
                 "protectedTools": ["skill", "compress"],
                 "protectTags": false,
                 "protectUserMessages": false,

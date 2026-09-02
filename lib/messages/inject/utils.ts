@@ -54,14 +54,6 @@ export function computeInputBudget(limit: ModelLimit): number | undefined {
     return limit.input ?? Math.max(0, limit.context - (limit.output ?? 0))
 }
 
-export function getNudgeFrequency(config: PluginConfig): number {
-    return Math.max(1, Math.floor(config.compress.nudgeFrequency || 1))
-}
-
-export function getIterationNudgeThreshold(config: PluginConfig): number {
-    return Math.max(1, Math.floor(config.compress.iterationNudgeThreshold || 1))
-}
-
 export function findLastNonIgnoredMessage(messages: WithParts[]): LastNonIgnoredMessage | null {
     for (let i = messages.length - 1; i >= 0; i--) {
         const message = messages[i]

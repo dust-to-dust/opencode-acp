@@ -38,8 +38,6 @@ function buildConfig(permission: "allow" | "ask" | "deny" = "allow"): PluginConf
             showCompression: false,
             maxContextLimit: 150000,
             minContextLimit: 50000,
-            nudgeFrequency: 5,
-            iterationNudgeThreshold: 15,
             nudgeForce: "soft",
             protectedTools: ["task"],
             protectTags: false,

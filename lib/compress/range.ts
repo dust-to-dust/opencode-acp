@@ -19,9 +19,12 @@ import {
 import {
     type CompressSelectionToolArgs,
     type SelectionResolution,
+    type ToolContext,
     type ToolFactoryContext,
     resolveToolContext,
 } from "./types"
+import { buildCompressionCandidates } from "../messages/inject/inject"
+import { applyCompressOverrides, computeProtectedRefs, getModelInfo } from "../messages/inject/utils"
 
 function buildSchema() {
     return {
@@ -66,6 +69,13 @@ function toolIdsForMessages(messages: WithParts[]): string[] {
         }
     }
     return [...ids]
+}
+
+function getCompressibleTokens(ctx: ToolContext, rawMessages: WithParts[]): number {
+    const { providerId, modelId } = getModelInfo(rawMessages)
+    const config = applyCompressOverrides(ctx.config, providerId, modelId)
+    const protectedRefs = computeProtectedRefs(rawMessages, ctx.state, config.compress)
+    return buildCompressionCandidates(ctx.state, config, rawMessages, protectedRefs).tokens
 }
 
 function buildSelection(
@@ -200,6 +210,24 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
         async execute(args, toolCtx) {
             const ctx = resolveToolContext(factoryCtx, toolCtx.sessionID)
             const input = args as CompressSelectionToolArgs
+            const callId =
+                typeof (toolCtx as unknown as { callID?: unknown }).callID === "string"
+                    ? (toolCtx as unknown as { callID: string }).callID
+                    : undefined
+
+            if (ctx.logger.level === "debug") {
+                ctx.logger.debug(
+                    `[ACP Debug] Compress tool call:${JSON.stringify({
+                        type: "tool",
+                        tool: "compress",
+                        callID: callId,
+                        messageID: toolCtx.messageID,
+                        sessionID: toolCtx.sessionID,
+                        state: { input },
+                    })}`,
+                )
+            }
+
             const pending = ctx.state.nudges.pendingCompression
             if (!pending) {
                 throw new Error(
@@ -216,6 +244,10 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
                 try {
                     ctx.state.nudges.pendingCompression = undefined
                     ctx.state.nudges.lastNudgeShownTokens = undefined
+                    ctx.state.nudges.lastCompressibleNudgeTokens = getCompressibleTokens(
+                        ctx,
+                        rawMessages,
+                    )
                     ctx.state.nudges.lastPerMessageNudgeTokens = getCurrentTokenUsage(
                         ctx.state,
                         rawMessages,
@@ -243,10 +275,6 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
                 )
             }
 
-            const callId =
-                typeof (toolCtx as unknown as { callID?: unknown }).callID === "string"
-                    ? (toolCtx as unknown as { callID: string }).callID
-                    : undefined
             const snapshot = snapshotCompressionState(ctx.state)
             const runId = allocateRunId(ctx.state)
             const blockId = allocateBlockId(ctx.state)
@@ -286,6 +314,10 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
 
                 ctx.state.nudges.pendingCompression = undefined
                 ctx.state.nudges.lastNudgeShownTokens = undefined
+                ctx.state.nudges.lastCompressibleNudgeTokens = getCompressibleTokens(
+                    ctx,
+                    rawMessages,
+                )
                 ctx.state.nudges.lastPerMessageNudgeTokens = getCurrentTokenUsage(
                     ctx.state,
                     rawMessages,

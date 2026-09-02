@@ -25,8 +25,6 @@ function buildConfig(mode: "message" | "range" = "range"): PluginConfig {
             summaryBuffer: true,
             maxContextLimit: 150000,
             minContextLimit: 50000,
-            nudgeFrequency: 5,
-            iterationNudgeThreshold: 15,
             nudgeForce: "soft",
             protectedTools: [],
             protectTags: false,

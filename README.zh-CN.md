@@ -274,9 +274,9 @@ ACP 先加载包内默认配置，再按以下顺序应用用户覆盖：
         "showCompression": true,
         // Let active summary tokens extend the effective maxContextLimit
         "summaryBuffer": true,
-        // Soft upper threshold: above this, ACP keeps injecting strong
-        // compression nudges (based on nudgeFrequency), so compression is
-        // much more likely. Accepts: number or "X%" of model context window.
+        // Soft upper threshold: above this, ACP requests compression when
+        // enough eligible content has accumulated. Accepts: number or "X%"
+        // of model context window.
         "maxContextLimit": "55%",
         // Soft lower threshold for reminder nudges: below this, turn/iteration
         // reminders are off (compression less likely). At/above this, reminders
@@ -314,11 +314,6 @@ ACP 先加载包内默认配置，再按以下顺序应用用户覆盖：
         //         }
         //     }
         // },
-        // How often the context-limit nudge fires (1 = every fetch, 5 = every 5th)
-        "nudgeFrequency": 5,
-        // Start adding compression reminders after this many
-        // messages have happened since the last user message
-        "iterationNudgeThreshold": 15,
         // Controls how likely compression is after user messages
         // ("strong" = more likely, "soft" = less likely)
         "nudgeForce": "soft",

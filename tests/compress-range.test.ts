@@ -31,8 +31,6 @@ function config(): PluginConfig {
             showCompression: false,
             maxContextLimit: 150000,
             minContextLimit: 50000,
-            nudgeFrequency: 5,
-            iterationNudgeThreshold: 15,
             nudgeForce: "soft",
             protectedTools: [],
             protectTags: false,
@@ -103,11 +101,10 @@ function message(
     }
 }
 
-function setup(rawMessages: WithParts[], pluginConfig = config()) {
+function setup(rawMessages: WithParts[], pluginConfig = config(), logger = new Logger(false)) {
     const sessionID = rawMessages[0].info.sessionID
     const state = createSessionState()
     state.sessionId = sessionID
-    const logger = new Logger(false)
     const compress = createCompressRangeTool({
         client: {
             session: {
@@ -168,6 +165,45 @@ test("compresses the complement of keep into one B checkpoint", async () => {
     assert.deepEqual(block?.directMessageIds, ["assistant-1"])
     assert.equal(state.prune.messages.byMessageId.has("assistant-2"), false)
     assert.match(block?.summary ?? "", /Result one is complete/)
+})
+
+test("debug logs the complete compress tool call without truncating input", async () => {
+    const sessionID = `selection-debug-log-${Date.now()}`
+    const messages = [
+        message(sessionID, "user-1", "user", "request", 1),
+        message(sessionID, "assistant-1", "assistant", "finished result", 2),
+        message(sessionID, "user-2", "user", "continue", 3),
+    ]
+    const debugMessages: string[] = []
+    const logger = {
+        level: "debug",
+        debug(message: string) {
+            debugMessages.push(message)
+        },
+        info() {},
+        warn() {},
+        error() {},
+    } as unknown as Logger
+    const { state, compress } = setup(messages, config(), logger)
+    state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
+    const longFact = "A complete fact that must remain intact in the debug tool call log.".repeat(4)
+
+    await compress.execute(
+        { keep: [], confirmedFacts: [longFact], nextSteps: ["Continue after compression."] },
+        toolContext(sessionID, "compress-message-1", "compress-call-1"),
+    )
+
+    const callLog = debugMessages.find((entry) => entry.includes("[ACP Debug] Compress tool call:"))
+    assert.ok(callLog, "expected the complete compress tool call debug log")
+    const payload = JSON.parse(callLog.slice(callLog.indexOf("{")))
+    assert.equal(payload.type, "tool")
+    assert.equal(payload.tool, "compress")
+    assert.equal(payload.callID, "compress-call-1")
+    assert.deepEqual(payload.state.input, {
+        keep: [],
+        confirmedFacts: [longFact],
+        nextSteps: ["Continue after compression."],
+    })
 })
 
 test("compresses every message in a tool activity atomically", async () => {
@@ -391,12 +427,12 @@ test("growth cycle requests compression again after a checkpoint resets the base
         summaryBuffer: false,
         maxContextLimit: 900_000,
         minContextLimit: 0,
-        nudgeGrowthTokens: 2_000,
+        nudgeGrowthTokens: 100,
         minNudgeContextPercent: 0,
-        minNudgeGrowthRatio: 0,
-        minNudgeGrowthFloor: 100,
+        minNudgeGrowthRatio: 1,
+        minNudgeGrowthFloor: 50_000,
         lastSegmentSoftBlock: true,
-        preserveRecentMessages: 1,
+        preserveRecentMessages: 0,
         preserveRecentTokens: 0,
     })
     const { state, compress } = setup(messages, pluginConfig)
@@ -409,13 +445,20 @@ test("growth cycle requests compression again after a checkpoint resets the base
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
 
     messages.push(
-        message(sessionID, "assistant-2", "assistant", "recent result", baseTime + 4, 103_000),
+        message(
+            sessionID,
+            "assistant-2",
+            "assistant",
+            "recent result ".repeat(100),
+            baseTime + 4,
+            103_000,
+        ),
     )
     assignMessageRefs(state, messages)
     const growthTurn = structuredClone(messages)
     injectCompressNudges(state, pluginConfig, new Logger(false), growthTurn, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
-    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2", "A4"])
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
 
     await compress.execute(
@@ -479,7 +522,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
             sessionID,
             "assistant-4",
             "assistant",
-            "more completed work",
+            "more completed work ".repeat(100),
             afterCompression + 3,
             106_000,
         ),

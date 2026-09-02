@@ -168,6 +168,7 @@ export function createSessionState(): SessionState {
             iterationNudgeAnchors: new Set<string>(),
             lastPerMessageNudgeTurn: 0,
             lastPerMessageNudgeTokens: undefined,
+            lastCompressibleNudgeTokens: undefined,
             lastNudgeShownTokens: undefined,
             lastToolOutputNudgeTokens: undefined,
             lastTier2NudgeTokens: undefined,
@@ -215,6 +216,7 @@ export function resetSessionState(state: SessionState): void {
         iterationNudgeAnchors: new Set<string>(),
         lastPerMessageNudgeTurn: 0,
         lastPerMessageNudgeTokens: undefined,
+        lastCompressibleNudgeTokens: undefined,
         lastNudgeShownTokens: undefined,
         lastToolOutputNudgeTokens: undefined,
         lastTier2NudgeTokens: undefined,
@@ -284,6 +286,7 @@ export async function ensureSessionInitialized(
     )
     state.nudges.lastPerMessageNudgeTurn = persisted.nudges.lastPerMessageNudgeTurn ?? 0
     state.nudges.lastPerMessageNudgeTokens = persisted.nudges.lastPerMessageNudgeTokens
+    state.nudges.lastCompressibleNudgeTokens = persisted.nudges.lastCompressibleNudgeTokens
     state.nudges.lastNudgeShownTokens = persisted.nudges.lastNudgeShownTokens
     state.nudges.lastToolOutputNudgeTokens = persisted.nudges.lastToolOutputNudgeTokens
     state.nudges.lastTier2NudgeTokens =

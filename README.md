@@ -320,9 +320,9 @@ Project settings take priority over global. Restart OpenCode after making config
         "showCompression": true,
         // Let active summary tokens extend the effective maxContextLimit
         "summaryBuffer": true,
-        // Soft upper threshold: above this, ACP keeps injecting strong
-        // compression nudges (based on nudgeFrequency), so compression is
-        // much more likely. Accepts: number or "X%" of model context window.
+        // Soft upper threshold: above this, ACP requests compression when
+        // enough eligible content has accumulated. Accepts: number or "X%"
+        // of model context window.
         "maxContextLimit": "80%",
         // Soft lower threshold for turn/iteration reminder nudges: below this,
         // those reminders are off (compression less likely). At/above this, they
@@ -361,11 +361,6 @@ Project settings take priority over global. Restart OpenCode after making config
         //         }
         //     }
         // },
-        // How often the context-limit nudge fires (1 = every fetch, 5 = every 5th)
-        "nudgeFrequency": 5,
-        // Start adding compression reminders after this many
-        // messages have happened since the last user message
-        "iterationNudgeThreshold": 15,
         // Controls how likely compression is after user messages
         // ("strong" = more likely, "soft" = less likely)
         "nudgeForce": "soft",
@@ -445,7 +440,7 @@ Resolution is **per field**: model > provider > global. Unknown provider/model I
 
 Not overridable here: `permission`, the deprecated `minContextLimit` / `modelMinLimits` family, and the flat `modelMaxLimits` / `modelMinLimits` maps themselves. Note: `modelMaxLimits` is **not** deprecated — it stays fully supported; a nested `maxContextLimit` simply outranks it.
 
-See the [`compress.providers`](./CONFIGURATION.md#compressproviders) reference in CONFIGURATION.md for the full 23-field list and recipes.
+See the [`compress.providers`](./CONFIGURATION.md#compressproviders) reference in CONFIGURATION.md for the full field list and recipes.
 
 ### Prompt Overrides
 

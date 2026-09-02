@@ -59,8 +59,6 @@ function buildConfig(): PluginConfig {
             minContextLimit: 5_000,
             minNudgeContextPercent: 0,
             nudgeGrowthTokens: 500_000,
-            nudgeFrequency: 5,
-            iterationNudgeThreshold: 15,
             nudgeForce: "soft",
             protectedTools: ["task"],
             protectTags: false,

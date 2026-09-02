@@ -29,11 +29,9 @@ export const VALID_CONFIG_KEYS = new Set([
     "compress.modelMaxLimits",
     "compress.modelMinLimits",
     "compress.providers",
-    "compress.nudgeFrequency",
     "compress.minNudgeContextPercent",
     "compress.nudgeGrowthTokens",
     "compress.toolOutputNudgeThreshold",
-    "compress.iterationNudgeThreshold",
     "compress.nudgeForce",
     "compress.protectedTools",
     "compress.protectTags",
@@ -238,36 +236,6 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                     key: "compress.summaryBuffer",
                     expected: "boolean",
                     actual: typeof compress.summaryBuffer,
-                })
-            }
-
-            if (
-                compress.nudgeFrequency !== undefined &&
-                typeof compress.nudgeFrequency !== "number"
-            ) {
-                errors.push({
-                    key: "compress.nudgeFrequency",
-                    expected: "number",
-                    actual: typeof compress.nudgeFrequency,
-                })
-            }
-
-            if (typeof compress.nudgeFrequency === "number" && compress.nudgeFrequency < 1) {
-                errors.push({
-                    key: "compress.nudgeFrequency",
-                    expected: "positive number (>= 1)",
-                    actual: `${compress.nudgeFrequency} (will be clamped to 1)`,
-                })
-            }
-
-            if (
-                compress.iterationNudgeThreshold !== undefined &&
-                typeof compress.iterationNudgeThreshold !== "number"
-            ) {
-                errors.push({
-                    key: "compress.iterationNudgeThreshold",
-                    expected: "number",
-                    actual: typeof compress.iterationNudgeThreshold,
                 })
             }
 
@@ -539,17 +507,6 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                 })
             }
 
-            if (
-                typeof compress.iterationNudgeThreshold === "number" &&
-                compress.iterationNudgeThreshold < 1
-            ) {
-                errors.push({
-                    key: "compress.iterationNudgeThreshold",
-                    expected: "positive number (>= 1)",
-                    actual: `${compress.iterationNudgeThreshold} (will be clamped to 1)`,
-                })
-            }
-
             const validateLimitValue = (
                 key: string,
                 value: unknown,
@@ -651,8 +608,6 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                 maxContextLimit: "limit",
                 emergencyThresholdPercent: "limit",
                 minNudgeContextPercent: "percent",
-                nudgeFrequency: "positiveNumber",
-                iterationNudgeThreshold: "positiveNumber",
                 toolOutputNudgeThreshold: "nonNegativeNumber",
                 nudgeGrowthTokens: "nonNegativeNumber",
                 minNudgeGrowthRatio: "nonNegativeNumber",

@@ -178,12 +178,6 @@ Core compression behavior.
 - **Status:** DEPRECATED
 - **Description:** **Deprecated — scheduled for removal alongside `minContextLimit`.** Per-model override for `minContextLimit`. Still honored until removed.
 
-#### `compress.nudgeFrequency`
-- **Type:** `number`
-- **Default:** `5`
-- **Status:** ACTIVE
-- **Description:** Minimum number of turns between nudge injections. Prevents nagging the model every turn.
-
 #### `compress.minNudgeContextPercent`
 - **Type:** `number`
 - **Default:** `5`
@@ -195,7 +189,7 @@ Core compression behavior.
 - **Default:** `undefined`
 - **Status:** ACTIVE
 - **Description:** Nested per-provider / per-model overrides for **every tunable compress field**, resolved field-by-field with the cascade **model > provider > global** (mirrors the sibling project billion-context-pi, issue #344). Deeper levels only override when the field is explicitly set — unset fields never clear shallower values. `0` / `false` are explicit values, not "unset". Unknown provider/model ids fall back to the global value. Percentages and `"X%"` limits resolve against the active model's context window. Across the two config file layers (global → project) the maps deep-merge per provider/model key — a project layer can narrow one provider without wiping others configured globally.
-- **Overridable fields:** `maxContextLimit`, `emergencyThresholdPercent`, `minNudgeContextPercent`, `nudgeFrequency`, `iterationNudgeThreshold`, `toolOutputNudgeThreshold`, `nudgeGrowthTokens`, `minNudgeGrowthRatio`, `minNudgeGrowthFloor`, `nudgeForce`, `protectedTools`, `showCompression`, `summaryBuffer`, `protectTags`, `protectUserMessages`, `maxSummaryLengthHard`, `minCompressRange`, `maxVisibleSegments`, `keepEmbedMaxChars`, `lastSegmentSoftBlock`, `preserveRecentMessages`, `preserveRecentTokens`, `preserveLastUserMessage`.
+- **Overridable fields:** `maxContextLimit`, `emergencyThresholdPercent`, `minNudgeContextPercent`, `toolOutputNudgeThreshold`, `nudgeGrowthTokens`, `minNudgeGrowthRatio`, `minNudgeGrowthFloor`, `nudgeForce`, `protectedTools`, `showCompression`, `summaryBuffer`, `protectTags`, `protectUserMessages`, `maxSummaryLengthHard`, `minCompressRange`, `maxVisibleSegments`, `keepEmbedMaxChars`, `lastSegmentSoftBlock`, `preserveRecentMessages`, `preserveRecentTokens`, `preserveLastUserMessage`.
 - **Not overridable:** `permission` (session-level, fixed before model info is known), the deprecated `minContextLimit` / `modelMinLimits` family, the flat `modelMaxLimits` / `modelMinLimits` maps themselves, and `providers` itself. `modelMaxLimits` itself is **not** deprecated — it remains fully supported (only outranked). For `maxContextLimit` the precedence when set nested is **nested override > `modelMaxLimits` flat map > global**. `protectedTools` set here affects the compress tool and nudge-side logic; the system-prompt protected-tools listing (shown at prompt build time, before model info is available) always reflects the global value.
 
 ```jsonc
@@ -226,19 +220,13 @@ In this example, for `anthropic/claude-sonnet-4-6`: the floor is 30%, the over-m
 - **Type:** `number`
 - **Default:** `50000` (fixed)
 - **Status:** ACTIVE
-- **Description:** The nudge growth threshold. ACP nudges when context grows by this many tokens since the last nudge. The default is a fixed value, identical for all model context window sizes (was previously scaled as a percentage of the window — removed in v1.14.23 because it made small-window models nudge ~4× more often).
+- **Description:** The eligible-content growth threshold. ACP nudges when content currently eligible for pruning grows by this many tokens since the last compression baseline. The default is a fixed value, identical for all model context window sizes.
 
 #### `compress.toolOutputNudgeThreshold`
 - **Type:** `number`
 - **Default:** `undefined`
 - **Status:** ACTIVE
 - **Description:** Token threshold for the tool-output-specific nudge. When tool outputs exceed this, a targeted nudge suggests compressing them.
-
-#### `compress.iterationNudgeThreshold`
-- **Type:** `number`
-- **Default:** `15`
-- **Status:** ACTIVE
-- **Description:** Inject an iteration nudge when this many messages accumulate since the last user message (indicates long tool-use chains without user interaction).
 
 #### `compress.nudgeForce`
 - **Type:** `"strong" | "soft"`
@@ -283,14 +271,14 @@ In this example, for `anthropic/claude-sonnet-4-6`: the floor is 30%, the over-m
 #### `compress.minNudgeGrowthRatio`
 - **Type:** `number`
 - **Default:** `0.45`
-- **Status:** ACTIVE
-- **Description:** Ratio of `nudgeGrowthTokens` used to calculate the nudge growth floor. Higher value = less frequent nudges.
+- **Status:** DEPRECATED
+- **Description:** Deprecated compatibility setting. It no longer adds a second growth floor; use `nudgeGrowthTokens` to set the eligible-content growth threshold.
 
 #### `compress.minNudgeGrowthFloor`
 - **Type:** `number`
 - **Default:** `5000`
-- **Status:** ACTIVE
-- **Description:** Minimum nudge growth threshold in tokens. The actual threshold is `max(this, minNudgeGrowthRatio × nudgeGrowthTokens)`.
+- **Status:** DEPRECATED
+- **Description:** Deprecated compatibility setting. It no longer adds a second growth floor; use `nudgeGrowthTokens` to set the eligible-content growth threshold.
 
 #### `compress.emergencyThresholdPercent`
 - **Type:** `number | \`${number}%\``
@@ -436,7 +424,6 @@ Post-compression quality evaluation. Runs after each compression to verify summa
         "minContextLimit": "35%",
         "preserveRecentMessages": 3,
         "preserveRecentTokens": 2000,
-        "nudgeFrequency": 3
     }
 }
 ```
@@ -449,7 +436,6 @@ Post-compression quality evaluation. Runs after each compression to verify summa
         "minContextLimit": "60%",
         "preserveRecentMessages": 15,
         "preserveRecentTokens": 10000,
-        "nudgeFrequency": 8,
         "protectedTools": ["skill", "bash", "read", "grep", "glob"]
     }
 }

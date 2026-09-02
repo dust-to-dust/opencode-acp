@@ -47,10 +47,8 @@ function buildConfig(): PluginConfig {
             summaryBuffer: true,
             maxContextLimit: 900_000,
             minContextLimit: 0,
-            nudgeFrequency: 5,
-            iterationNudgeThreshold: 15,
             nudgeForce: "soft",
-            nudgeGrowthTokens: 2_000,
+            nudgeGrowthTokens: 2,
             protectedTools: [],
             protectTags: false,
             protectUserMessages: false,
@@ -247,6 +245,7 @@ test("scheduler establishes a baseline before it requests compression", () => {
 
 test("multi-turn growth freezes a short cache-safe selection request", () => {
     const config = buildConfig()
+    config.compress.preserveRecentMessages = 0
     const raw = [
         userMessage("user-1", "initial request", 1),
         assistantMessage("assistant-1", "finished result", 2, 100_000),
@@ -267,8 +266,8 @@ test("multi-turn growth freezes a short cache-safe selection request", () => {
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
     assert.deepEqual(state.nudges.pendingCompression, {
-        candidates: ["A2"],
-        cacheBoundary: "A2",
+        candidates: ["A2", "A4"],
+        cacheBoundary: "A4",
         createdAtTokens: 103_000,
     })
 
@@ -276,8 +275,8 @@ test("multi-turn growth freezes a short cache-safe selection request", () => {
     const requestTarget = secondTurn.find((message) => message.info.id === "user-2")!
     const request = messageText(requestTarget)
     assert.match(request, /\[ACP compression required\]/)
-    assert.match(request, /Eligible blocks \(oldest first\):\nA2/)
-    assert.match(request, /Cache boundary: A2/)
+    assert.match(request, /Eligible blocks \(oldest first\):\nA2, A4/)
+    assert.match(request, /Cache boundary: A4/)
     assert.match(request, /Template marker: semantic/)
     assert.doesNotMatch(request, /Confirmed facts|compression philosophy|HOW TO COMPRESS/i)
 
@@ -300,6 +299,7 @@ test("nothing eligible does not consume the growth baseline", () => {
     ]
     const state = initializeState(raw)
     state.nudges.lastPerMessageNudgeTokens = 100_000
+    state.nudges.lastCompressibleNudgeTokens = 0
 
     const protectedTurn = transformed(raw)
     injectCompressNudges(state, config, logger, protectedTurn, prompts)

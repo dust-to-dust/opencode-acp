@@ -32,8 +32,6 @@ function buildConfig(mode: "message" | "range" = "message"): PluginConfig {
             showCompression: false,
             maxContextLimit: 150000,
             minContextLimit: 50000,
-            nudgeFrequency: 5,
-            iterationNudgeThreshold: 15,
             nudgeForce: "soft",
             protectedTools: ["task"],
             protectTags: false,

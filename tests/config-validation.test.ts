@@ -33,6 +33,16 @@ test("getInvalidConfigKeys returns dot-path keys for unknown nested keys", () =>
     assert.ok(result.includes("compress.unknownSubKey"))
 })
 
+test("getInvalidConfigKeys rejects removed nudge scheduling keys", () => {
+    const result = getInvalidConfigKeys({
+        compress: { nudgeFrequency: 5, iterationNudgeThreshold: 15 },
+    })
+    assert.deepEqual(result, [
+        "compress.nudgeFrequency",
+        "compress.iterationNudgeThreshold",
+    ])
+})
+
 test("getInvalidConfigKeys returns top-level unknown keys", () => {
     const result = getInvalidConfigKeys({ completelyUnknown: 123 })
     assert.deepEqual(result, ["completelyUnknown"])

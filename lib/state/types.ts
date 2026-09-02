@@ -110,6 +110,8 @@ export interface Nudges {
     iterationNudgeAnchors: Set<string>
     lastPerMessageNudgeTurn: number
     lastPerMessageNudgeTokens: number | undefined
+    /** Approximate token count of eligible content at the last compression baseline. */
+    lastCompressibleNudgeTokens: number | undefined
     lastNudgeShownTokens: number | undefined
     lastToolOutputNudgeTokens: number | undefined
     lastTier2NudgeTokens: number | undefined

@@ -45,6 +45,7 @@ test-update.ts
 # Local investigation artifacts
 SCHEMA_NOTES.md
 架构.md
+temp/
 
 repomix-output.xml
 results.txt

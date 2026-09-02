@@ -403,6 +403,7 @@ export function resetOnCompaction(state: SessionState): void {
         iterationNudgeAnchors: new Set<string>(),
         lastPerMessageNudgeTurn: 0,
         lastPerMessageNudgeTokens: undefined,
+        lastCompressibleNudgeTokens: undefined,
         lastNudgeShownTokens: undefined,
         lastToolOutputNudgeTokens: undefined,
         lastTier2NudgeTokens: undefined,
