@@ -275,7 +275,6 @@ test("providers: deepCloneConfig isolates the nested maps", () => {
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { customPrompts: false },
         protectedFilePatterns: [],
         compress: {
             ...base,

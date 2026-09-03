@@ -48,7 +48,7 @@ function buildConfig(): PluginConfig {
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: {
             mode: "message",
@@ -140,14 +140,11 @@ function createMockPrompts() {
                 system: "ACP system",
                 compressRange: "compress range",
                 contextLimitNudge: "nudge",
-                turnNudge: "turn nudge",
-                iterationNudge: "iteration nudge",
                 subagentExtension: "",
                 decompressExtension: "",
                 protectedToolsExtension: "",
                 compressionRequest:
                     "[ACP compression required]\n\nCandidates: {{candidates}}\n\nCache boundary: {{cacheBoundary}}",
-                howToCompressRules: "",
             }
         },
     }

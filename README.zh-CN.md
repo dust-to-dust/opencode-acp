@@ -255,12 +255,6 @@ ACP 先加载包内默认配置，再按以下顺序应用用户覆盖：
     // tools only run when explicitly triggered via /acp commands
     // 允许在子代理会话中运行 ACP（默认：开启）
     "allowSubAgents": true,
-    // Experimental settings
-    "experimental": {
-        // Enable user-editable prompt files under the acm/prompts directory
-        // When false (default), prompt files are ignored
-        "customPrompts": false,
-    },
     // Protect file operations from pruning via glob patterns
     // Patterns match tool parameters.filePath (e.g. read/write/edit)
     "protectedFilePatterns": [],
@@ -394,23 +388,19 @@ ACP 先加载包内默认配置，再按以下顺序应用用户覆盖：
 
 完整 23 项字段清单与配方见 CONFIGURATION.zh-CN.md 的 [`compress.providers`](./CONFIGURATION.zh-CN.md#compressproviders) 参考节。
 
-### Prompt 覆盖
+### 全局 Prompt
 
-ACP 暴露五个可编辑的 prompt：
+ACP 仅从 `~/.config/opencode/acm/prompts/` 加载七个运行时 prompt：
 
 - `system`
 - `compress-range`
 - `context-limit-nudge`
-- `turn-nudge`
-- `iteration-nudge`
+- `subagent-extension`
+- `decompress-extension`
+- `protected-tools`
+- `compression-request`
 
-此功能默认禁用。在 ACP 配置中将 `experimental.customPrompts` 设为 `true` 以激活。
-
-启用后，托管的 prompt 文件会作为纯文本写入 `~/.config/opencode/acm/prompts/`。该目录中的 `README.md` 解释了每个 prompt。
-
-要全局自定义行为，直接编辑 `~/.config/opencode/acm/prompts/` 下的同名文件。要只对项目生效，在项目根目录的 `.opencode/prompts/` 下添加文件；项目覆盖优先于全局 prompt。
-
-要重置全局 prompt，删除 `~/.config/opencode/acm/prompts/` 下的对应文件；要重置项目 prompt，删除 `.opencode/prompts/` 下的对应文件。
+不存在功能开关、项目级覆盖或缓存包回退。直接编辑这些文件即可进行全局定制。开发部署脚本只补齐缺失的默认文件，不覆盖已有修改；删除必需文件后，需要先重新部署再重启 OpenCode。
 
 ### 受保护工具
 

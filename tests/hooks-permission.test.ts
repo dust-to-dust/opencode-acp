@@ -27,10 +27,7 @@ function buildConfig(permission: "allow" | "ask" | "deny" = "allow"): PluginConf
             enabled: true,
             protectedTools: [],
         },
-        experimental: {
-            allowSubAgents: false,
-            customPrompts: false,
-        },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: {
             mode: "message",

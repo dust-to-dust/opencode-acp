@@ -2,6 +2,7 @@ import "./test-env"
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { PluginConfig } from "../lib/config"
+import { createSystemPromptHandler } from "../lib/hooks"
 import { Logger } from "../lib/logger"
 import { assignMessageRefs, formatMessageIdTag } from "../lib/message-ids"
 import { injectCompressNudges, injectMessageIds } from "../lib/messages/inject/inject"
@@ -12,19 +13,18 @@ import {
     type SessionState,
     type WithParts,
 } from "../lib/state"
+import { createTestRegistry } from "./registry-stub"
 
 const SID = "ses-inject-selection"
 const logger = new Logger(false)
 const prompts = {
     system: "",
     compressRange: "",
-    contextLimitNudge: "",
-    turnNudge: "",
-    iterationNudge: "",
+    contextLimitNudge:
+        "<dcp-system-reminder>Context limit marker: compress before overflow.</dcp-system-reminder>",
     subagentExtension: "",
     decompressExtension: "",
     protectedToolsExtension: "",
-    howToCompressRules: "",
     compressionRequest:
         "[ACP compression required]\nCall `compress` before continuing.\nEligible blocks (oldest first):\n{{candidates}}\nCache boundary: {{cacheBoundary}}. Content after this boundary and unlisted blocks are not eligible.\nTemplate marker: semantic",
 } as RuntimePrompts
@@ -39,7 +39,6 @@ function buildConfig(): PluginConfig {
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { customPrompts: false },
         protectedFilePatterns: [],
         compress: {
             permission: "allow",
@@ -243,7 +242,7 @@ test("scheduler establishes a baseline before it requests compression", () => {
     assert.equal(current.length, messages.length)
 })
 
-test("multi-turn growth freezes a short cache-safe selection request", () => {
+test("multi-turn growth injects a frozen selection request into the same request's system prompt", async () => {
     const config = buildConfig()
     config.compress.preserveRecentMessages = 0
     const raw = [
@@ -273,12 +272,36 @@ test("multi-turn growth freezes a short cache-safe selection request", () => {
 
     assert.equal(secondTurn.length, raw.length, "request must not add a synthetic message")
     const requestTarget = secondTurn.find((message) => message.info.id === "user-2")!
-    const request = messageText(requestTarget)
+    assert.equal(messageText(requestTarget), "continue", "user content must remain unchanged")
+    const request = state.nudges.pendingSystemNudge ?? ""
     assert.match(request, /\[ACP compression required\]/)
     assert.match(request, /Eligible blocks \(oldest first\):\nA2, A4/)
     assert.match(request, /Cache boundary: A4/)
     assert.match(request, /Template marker: semantic/)
+    assert.doesNotMatch(request, /Context limit marker/)
     assert.doesNotMatch(request, /Confirmed facts|compression philosophy|HOW TO COMPRESS/i)
+
+    const systemHandler = createSystemPromptHandler(
+        createTestRegistry(state),
+        logger,
+        config,
+        {
+            reload() {},
+            getRuntimePrompts: () => prompts,
+        },
+    )
+    const systemOutput = { system: ["Base system"] }
+    await systemHandler(
+        {
+            sessionID: SID,
+            model: { id: "model", providerID: "test", limit: { context: 1_000_000 } },
+        },
+        systemOutput,
+    )
+    assert.match(systemOutput.system[0], /Base system/)
+    assert.match(systemOutput.system[0], /\[ACP compression required\]/)
+    assert.match(systemOutput.system[0], /Eligible blocks \(oldest first\):\nA2, A4/)
+    assert.equal(state.nudges.pendingSystemNudge, undefined, "system hook consumes the nudge")
 
     const pendingTurn = transformed(raw)
     const latestAssistant = pendingTurn.find((message) => message.info.id === "assistant-2")!
@@ -286,9 +309,38 @@ test("multi-turn growth freezes a short cache-safe selection request", () => {
     injectCompressNudges(state, config, logger, pendingTurn, prompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
-    assert.equal(pendingTurn.length, raw.length, "pending request must reuse the current user message")
+    assert.equal(
+        pendingTurn.length,
+        raw.length,
+        "pending request must not add a synthetic message",
+    )
     const pendingTarget = pendingTurn.find((message) => message.info.id === "user-2")!
-    assert.equal(messageText(pendingTarget), request)
+    assert.equal(messageText(pendingTarget), "continue")
+    assert.equal(state.nudges.pendingSystemNudge, request)
+})
+
+test("max-context requests stage limit guidance for the current system prompt", () => {
+    const config = buildConfig()
+    config.compress.maxContextLimit = 100_000
+    config.compress.preserveRecentMessages = 0
+    const raw = [
+        userMessage("user-1", "initial request", 1),
+        assistantMessage("assistant-1", "finished result", 2, 103_000),
+        userMessage("user-2", "continue", 3),
+    ]
+    const state = initializeState(raw)
+    state.nudges.lastPerMessageNudgeTokens = 100_000
+
+    const current = transformed(raw)
+    injectCompressNudges(state, config, logger, current, prompts)
+
+    assert.equal(current.length, raw.length)
+    assert.equal(messageText(current.find((message) => message.info.id === "user-2")!), "continue")
+    const request = state.nudges.pendingSystemNudge ?? ""
+    assert.match(request, /Context limit marker: compress before overflow/)
+    assert.match(request, /Eligible blocks \(oldest first\):\nA2/)
+    assert.match(request, /Cache boundary: A2/)
+    assert.ok(request.indexOf("Context limit marker") < request.indexOf("Eligible blocks"))
 })
 
 test("nothing eligible does not consume the growth baseline", () => {
@@ -433,7 +485,7 @@ test("recent-message protection includes visible checkpoint carriers", () => {
     const config = buildConfig()
     config.compress.preserveRecentMessages = 2
     const carrier = assistantMessage("compress-1", "checkpoint", 3, 103_000, [
-            toolPart("compress-1", "compress-call-1", "compress", "created B1"),
+        toolPart("compress-1", "compress-call-1", "compress", "created B1"),
     ])
     const raw = [
         userMessage("user-1", "request", 1),

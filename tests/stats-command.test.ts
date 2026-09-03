@@ -13,7 +13,7 @@ function buildConfig(): PluginConfig {
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
         turnProtection: { enabled: false, turns: 4 },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: {
             mode: "range",

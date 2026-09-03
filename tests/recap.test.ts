@@ -61,10 +61,6 @@ function makeState(activeIds: number[], blocks: Map<number, CompressionBlock>): 
             },
         },
         nudges: {
-            contextLimitAnchors: new Set(),
-            turnNudgeAnchors: new Set(),
-            iterationNudgeAnchors: new Set(),
-            lastPerMessageNudgeTurn: 0,
             lastPerMessageNudgeTokens: undefined,
         },
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },

@@ -5,7 +5,6 @@ import type {
     SessionState,
     WithParts,
 } from "./types"
-import { isIgnoredUserMessage, messageHasCompress } from "../messages/query"
 import { isMessageWithInfo } from "../messages/shape"
 import { countTokens } from "../token-utils"
 import { formatBlockRef } from "../message-ids"
@@ -317,34 +316,6 @@ export function loadPruneMessagesState(
     return state
 }
 
-export function collectTurnNudgeAnchors(messages: WithParts[]): Set<string> {
-    const anchors = new Set<string>()
-    let pendingUserMessageId: string | null = null
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i]
-
-        if (messageHasCompress(message)) {
-            break
-        }
-
-        if (message.info.role === "user") {
-            if (!isIgnoredUserMessage(message)) {
-                pendingUserMessageId = message.info.id
-            }
-            continue
-        }
-
-        if (message.info.role === "assistant" && pendingUserMessageId) {
-            anchors.add(message.info.id)
-            anchors.add(pendingUserMessageId)
-            pendingUserMessageId = null
-        }
-    }
-
-    return anchors
-}
-
 /**
  * Sum summary tokens of active blocks.
  * When visibleMessageIds is provided, only counts blocks whose compressMessageId
@@ -398,10 +369,6 @@ export function resetOnCompaction(state: SessionState): void {
     // Only reset transient state. Compression blocks are still valid even after
     // opencode compacts — their summaries are still needed in context.
     state.nudges = {
-        contextLimitAnchors: new Set<string>(),
-        turnNudgeAnchors: new Set<string>(),
-        iterationNudgeAnchors: new Set<string>(),
-        lastPerMessageNudgeTurn: 0,
         lastPerMessageNudgeTokens: undefined,
         lastCompressibleNudgeTokens: undefined,
         lastNudgeShownTokens: undefined,
@@ -409,6 +376,7 @@ export function resetOnCompaction(state: SessionState): void {
         lastTier2NudgeTokens: undefined,
         lastTier3NudgeTokens: undefined,
         shouldInjectThisTurn: undefined,
+        pendingSystemNudge: undefined,
         compressBaselineSet: false,
         lastProcessedCompressMessageId: undefined,
         pendingCompression: undefined,

@@ -13,7 +13,7 @@ function buildConfig(qualityGateEnabled: boolean): PluginConfig {
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: true, customPrompts: false },
+        allowSubAgents: true,
         protectedFilePatterns: [],
         compress: {
             permission: "allow",

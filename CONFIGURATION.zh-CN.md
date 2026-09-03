@@ -117,18 +117,6 @@ ACP 先加载包内默认配置，再读取两层用户覆盖（后加载的覆�
 
 ---
 
-### `experimental`
-
-实验性功能，可能变更或移除。
-
-#### `experimental.customPrompts`
-- **类型：** `boolean`
-- **默认值：** `false`
-- **状态：** EXPERIMENTAL
-- **说明：** 启用从 `~/.config/opencode/acm/prompts/` 加载自定义 prompt 覆盖。
-
----
-
 ### `compress`
 
 核心压缩行为。

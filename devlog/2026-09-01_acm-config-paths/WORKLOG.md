@@ -6,8 +6,8 @@
 - Removed the `XDG_CONFIG_HOME` and `OPENCODE_CONFIG_DIR` ACP config layers.
 - Kept nearest project `.opencode/acp.jsonc` or `acp.json` as the only project override.
 - Moved global editable prompt files to `~/.config/opencode/acm/prompts/`.
-- Kept nearest project `.opencode/prompts/` as the only prompt override layer.
-- Updated local deployment to copy package `config/` assets alongside `dist/`.
+- The historical project prompt layer was later removed in favor of one global source.
+- Local deployment now copies only `config/acp.jsonc` alongside `dist/`; prompt files are forbidden in cache targets.
 - Updated local deployment to initialize `~/.config/opencode/acm/` with a
   non-destructive config starter and prompt files.
 - Updated English and Chinese configuration, README, and architecture documentation.
@@ -36,4 +36,4 @@
 
 - Existing files under `~/.config/opencode/acp.jsonc`, `~/.config/opencode/acp-prompts/`, `$XDG_CONFIG_HOME`, and `$OPENCODE_CONFIG_DIR` are no longer read by ACP.
 - No automatic migration is performed. Users must copy desired settings into `~/.config/opencode/acm/` and prompt files into `~/.config/opencode/acm/prompts/`.
-- Package defaults remain in `config/acp.jsonc` and `config/prompts/`; they are copied into the development plugin cache by `scripts/dev-deploy.sh`.
+- Package configuration remains in `config/acp.jsonc`. Repository prompt files are deployment inputs copied only to the global ACM prompt directory.

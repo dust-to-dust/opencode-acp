@@ -16,7 +16,7 @@ function buildConfig(mode: "message" | "range" = "range"): PluginConfig {
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: {
             mode,

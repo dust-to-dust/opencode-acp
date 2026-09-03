@@ -35,24 +35,6 @@ import {
 } from "./utils"
 import { messageContainsProtectedTool } from "../../compress/protected-content"
 
-/** Stable seed for a fallback text part on the ACP dynamic guidance target. */
-const ACP_SUFFIX_SEED = "acp-dynamic-guidance"
-
-/**
- * Resolve the current turn's user message as the dynamic guidance target.
- * OpenCode only forwards messages backed by session history, so a new synthetic
- * message added by the transform hook is not guaranteed to reach the provider.
- * Mutating the latest user message keeps older cacheable history unchanged.
- */
-function createSuffixMessage(messages: WithParts[]): WithParts | null {
-    const target = messages.findLast((message) => message.info.role === "user")
-    if (!target) return null
-    if (!target.parts.some((part) => part.type === "text")) {
-        target.parts.push(createSyntheticTextPart(target, "", ACP_SUFFIX_SEED))
-    }
-    return target
-}
-
 export const injectCompressNudges = (
     state: SessionState,
     config: PluginConfig,
@@ -63,6 +45,7 @@ export const injectCompressNudges = (
     debugNotify?: (text: string) => void,
     _preCompressTokens?: number,
 ): void => {
+    state.nudges.pendingSystemNudge = undefined
     if (compressPermission(state, config) === "deny") {
         return
     }
@@ -95,14 +78,13 @@ export const injectCompressNudges = (
             pending.candidates.every((ref) => available.has(ref))
 
         if (pendingIsCurrent) {
-            const suffixMessage = createSuffixMessage(messages)
-            if (suffixMessage) {
-                appendToLastTextPart(
-                    suffixMessage,
-                    renderCompressionRequest(prompts, pending.candidates, pending.cacheBoundary),
-                )
-                finishSuffix(messages, suffixMessage, debugNotify)
-            }
+            state.nudges.pendingSystemNudge = renderCompressionRequest(
+                prompts,
+                pending.candidates,
+                pending.cacheBoundary,
+                overMaxLimit || emergencyOverride,
+            )
+            debugNotify?.(state.nudges.pendingSystemNudge)
             state.nudges.shouldInjectThisTurn = true
             return
         }
@@ -143,8 +125,7 @@ export const injectCompressNudges = (
         stateChanged = true
     }
 
-    const compressibleGrowth =
-        candidateResult.tokens - state.nudges.lastCompressibleNudgeTokens
+    const compressibleGrowth = candidateResult.tokens - state.nudges.lastCompressibleNudgeTokens
     const growthThresholdMet = compressibleGrowth > 0 && compressibleGrowth >= nudgeGrowthTokens
     const minNudgeFloorTokens = resolveMinNudgeFloorTokens(
         config,
@@ -158,9 +139,7 @@ export const injectCompressNudges = (
         currentTokens >= minNudgeFloorTokens
     const nudgeAllowed =
         emergencyOverride ||
-        (growthThresholdMet &&
-            (overMaxLimit || overMinNudgeFloor) &&
-            candidateResult.tokens > 0)
+        (growthThresholdMet && (overMaxLimit || overMinNudgeFloor) && candidateResult.tokens > 0)
 
     const meetsMinimum =
         config.compress.minCompressRange <= 0 ||
@@ -177,14 +156,13 @@ export const injectCompressNudges = (
         state.nudges.shouldInjectThisTurn = true
         stateChanged = true
 
-        const suffixMessage = createSuffixMessage(messages)
-        if (suffixMessage) {
-            appendToLastTextPart(
-                suffixMessage,
-                renderCompressionRequest(prompts, pending.candidates, pending.cacheBoundary),
-            )
-            finishSuffix(messages, suffixMessage, debugNotify)
-        }
+        state.nudges.pendingSystemNudge = renderCompressionRequest(
+            prompts,
+            pending.candidates,
+            pending.cacheBoundary,
+            overMaxLimit || emergencyOverride,
+        )
+        debugNotify?.(state.nudges.pendingSystemNudge)
         logger.info("Compression selection requested", {
             session: state.sessionId,
             trigger: emergencyOverride ? "emergency" : "growth",
@@ -294,9 +272,7 @@ export function buildCompressionCandidates(
     return {
         refs: entries.map((entry) => entry.ref),
         characters: entries.reduce((total, entry) => total + entry.characters, 0),
-        tokens: Math.round(
-            entries.reduce((total, entry) => total + entry.characters, 0) / 4,
-        ),
+        tokens: Math.round(entries.reduce((total, entry) => total + entry.characters, 0) / 4),
     }
 }
 
@@ -308,38 +284,20 @@ export function buildCompressionCandidates(
     return `\n<dcp-system-reminder>\nACP compression is required before continuing.\nEligible blocks (oldest first):\n${lines.join("\n")}\nCache boundary: ${cacheBoundary}. Content after this boundary and unlisted blocks are not eligible.\nCall \`compress\` now.\n</dcp-system-reminder>`
 */
 
-function finishSuffix(
-    messages: WithParts[],
-    suffixMessage: WithParts,
-    debugNotify?: (text: string) => void,
-): void {
-    if (!hasContent(suffixMessage)) {
-        const index = messages.lastIndexOf(suffixMessage)
-        if (index !== -1) messages.splice(index, 1)
-        return
-    }
-    appendToLastTextPart(suffixMessage, "\n")
-    if (!debugNotify) return
-    const text = suffixMessage.parts
-        .filter((part) => part.type === "text")
-        .map((part) => (part as { text?: string }).text ?? "")
-        .join("\n")
-        .trim()
-    if (text) debugNotify(text)
-}
-
 function renderCompressionRequest(
     prompts: RuntimePrompts,
     candidates: string[],
     cacheBoundary: string,
+    contextLimitReached: boolean,
 ): string {
     const lines: string[] = []
     for (let index = 0; index < candidates.length; index += 30) {
         lines.push(candidates.slice(index, index + 30).join(", "))
     }
-    return prompts.compressionRequest
+    const request = prompts.compressionRequest
         .replace("{{candidates}}", lines.join("\n"))
         .replace("{{cacheBoundary}}", cacheBoundary)
+    return contextLimitReached ? `${prompts.contextLimitNudge}\n\n${request}` : request
 }
 
 function resolveEmergencyThreshold(

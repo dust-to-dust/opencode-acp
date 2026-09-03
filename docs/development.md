@@ -41,7 +41,7 @@ Context files contain per-request message snapshots. Daily logs always include w
 
 ## Package and Platform Notes
 
-- Runtime configuration and prompt assets must be present in the package, not only in the source tree.
+- Runtime configuration must be present in the package. Prompt files must instead be deployed to `~/.config/opencode/acm/prompts/` and must not be present in the cached package.
 - Run package verification after changing `package.json`'s `files` list or adding runtime assets.
 - Prefer commands from `package.json` and the repository scripts over platform-specific ad-hoc commands.
 - If a local environment exposes platform-specific failures, record the exact command and error in the worklog rather than weakening runtime behavior without a design decision.

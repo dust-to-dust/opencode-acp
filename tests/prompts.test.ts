@@ -1,187 +1,159 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import test from "node:test"
-import { join } from "node:path"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
+import { join } from "node:path"
+import test from "node:test"
+import type { PluginConfig } from "../lib/config"
+import { createSystemPromptHandler } from "../lib/hooks"
 import { Logger } from "../lib/logger"
-import { PromptStore } from "../lib/prompts/store"
+import { PromptStore, type PromptKey } from "../lib/prompts/store"
+import { SessionStateRegistry } from "../lib/state"
 
-interface PromptFixture {
-    configHome: string
-    configDir: string
-    workspaceDir: string
-    globalOverridesDir: string
-    configOverridesDir: string
-    projectOverridesDir: string
-    cleanup: () => void
+const promptFiles: Record<PromptKey, string> = {
+    system: "Global system prompt",
+    "compress-range": "Global compress description",
+    "context-limit-nudge": "Global context limit prompt",
+    "subagent-extension": "Global subagent extension",
+    "decompress-extension": "Global decompress extension",
+    "protected-tools": "Protected tools: {{toolList}}",
+    "compression-request": "Global request {{candidates}} {{cacheBoundary}}",
 }
 
-function createFixture(): PromptFixture {
+function createPromptFixture(): { promptsDir: string; cleanup: () => void } {
     const rootDir = mkdtempSync(join(tmpdir(), "opencode-acp-prompts-"))
-    const configHome = join(rootDir, "config")
-    const configDir = join(rootDir, "config-dir")
-    const workspaceDir = join(rootDir, "workspace", "nested")
-    const globalOverridesDir = join(
-        configHome,
-        ".config",
-        "opencode",
-        "acm",
-        "prompts",
-    )
-    const configOverridesDir = join(configDir, "prompts")
-    const projectOverridesDir = join(rootDir, "workspace", ".opencode", "prompts")
-    mkdirSync(workspaceDir, { recursive: true })
-
-    const previousHome = process.env.HOME
-    const previousUserProfile = process.env.USERPROFILE
-    const previousConfigHome = process.env.XDG_CONFIG_HOME
-    const previousConfigDir = process.env.OPENCODE_CONFIG_DIR
-    process.env.HOME = configHome
-    process.env.USERPROFILE = configHome
-    process.env.XDG_CONFIG_HOME = configHome
-    process.env.OPENCODE_CONFIG_DIR = configDir
-
+    const promptsDir = join(rootDir, ".config", "opencode", "acm", "prompts")
+    mkdirSync(promptsDir, { recursive: true })
+    for (const [key, content] of Object.entries(promptFiles)) {
+        writeFileSync(join(promptsDir, `${key}.md`), `${content}\n`, "utf-8")
+    }
     return {
-        configHome,
-        configDir,
-        workspaceDir,
-        globalOverridesDir,
-        configOverridesDir,
-        projectOverridesDir,
-        cleanup() {
-            if (previousHome === undefined) {
-                delete process.env.HOME
-            } else {
-                process.env.HOME = previousHome
-            }
-            if (previousUserProfile === undefined) {
-                delete process.env.USERPROFILE
-            } else {
-                process.env.USERPROFILE = previousUserProfile
-            }
-            if (previousConfigHome === undefined) {
-                delete process.env.XDG_CONFIG_HOME
-            } else {
-                process.env.XDG_CONFIG_HOME = previousConfigHome
-            }
-            if (previousConfigDir === undefined) {
-                delete process.env.OPENCODE_CONFIG_DIR
-            } else {
-                process.env.OPENCODE_CONFIG_DIR = previousConfigDir
-            }
-            rmSync(rootDir, { recursive: true, force: true })
+        promptsDir,
+        cleanup: () => rmSync(rootDir, { recursive: true, force: true }),
+    }
+}
+
+function buildConfig(): PluginConfig {
+    return {
+        enabled: true,
+        autoUpdate: false,
+        debug: false,
+        logLevel: "info",
+        allowSubAgents: true,
+        pruneNotification: "off",
+        pruneNotificationType: "toast",
+        commands: { enabled: true, protectedTools: [] },
+        protectedFilePatterns: [],
+        compress: {
+            permission: "allow",
+            showCompression: true,
+            summaryBuffer: true,
+            maxContextLimit: "55%",
+            minContextLimit: "45%",
+            minNudgeContextPercent: 5,
+            nudgeForce: "soft",
+            protectedTools: [],
+            protectTags: false,
+            protectUserMessages: false,
+            maxSummaryLengthHard: 20_000,
+            minCompressRange: 5_000,
+            minNudgeGrowthRatio: 0.45,
+            minNudgeGrowthFloor: 5_000,
+            emergencyThresholdPercent: "98%",
+            maxVisibleSegments: 50,
+            keepEmbedMaxChars: 2_000,
         },
+        gc: {
+            algorithm: "truncate",
+            promotionThreshold: 5,
+            maxBlockAge: Number.MAX_SAFE_INTEGER,
+            maxOldGenSummaryLength: 3_000,
+            majorGcThresholdPercent: "100%",
+            batchCleanup: {
+                lowThreshold: "55%",
+                highThreshold: "75%",
+                forceThreshold: "90%",
+            },
+        },
+        qualityGate: { enabled: false, algorithm: "rouge-recall-v1", algorithms: {} },
+        messageFilters: { enabled: true, filters: {} },
     }
 }
 
-function writePrompt(directory: string, fileName: string, content: string): void {
-    mkdirSync(directory, { recursive: true })
-    writeFileSync(join(directory, fileName), content, "utf-8")
-}
+test("loads every runtime prompt from the global ACM prompt directory", () => {
+    const fixture = createPromptFixture()
+    try {
+        const prompts = new PromptStore(new Logger(false), fixture.promptsDir).getRuntimePrompts()
 
-test("bundled prompts are semantic, file-backed, and complete", () => {
-    const prompts = new PromptStore(new Logger(false)).getRuntimePrompts()
-
-    assert.match(prompts.system, /immutable activity blocks and checkpoints/i)
-    assert.match(prompts.system, /HOW TO SELECT/)
-    assert.match(prompts.compressRange, /Select which eligible context blocks remain verbatim/i)
-    assert.doesNotMatch(prompts.compressRange, /Collapse a range in the conversation/i)
-    assert.doesNotMatch(prompts.compressRange, /<{7}|={7}|>{7}/)
-    assert.match(prompts.protectedToolsExtension, /\{\{toolList\}\}/)
-    assert.match(prompts.compressionRequest, /\{\{candidates\}\}/)
-    assert.match(prompts.compressionRequest, /\{\{cacheBoundary\}\}/)
-
-    for (const value of Object.values(prompts)) {
-        assert.ok(value.trim())
+        assert.match(prompts.system, /Global system prompt/)
+        assert.equal(prompts.compressRange, promptFiles["compress-range"])
+        assert.match(prompts.contextLimitNudge, /Global context limit prompt/)
+        assert.equal(prompts.subagentExtension, promptFiles["subagent-extension"])
+        assert.equal(prompts.decompressExtension, promptFiles["decompress-extension"])
+        assert.equal(prompts.protectedToolsExtension, promptFiles["protected-tools"])
+        assert.equal(prompts.compressionRequest, promptFiles["compression-request"])
+    } finally {
+        fixture.cleanup()
     }
 })
 
-test("custom prompts can be disabled without reading overrides", () => {
-    const fixture = createFixture()
+test("reload reads prompt edits from the same global directory", () => {
+    const fixture = createPromptFixture()
     try {
-        writePrompt(fixture.projectOverridesDir, "system.md", "Project override")
+        const store = new PromptStore(new Logger(false), fixture.promptsDir)
+        writeFileSync(
+            join(fixture.promptsDir, "compression-request.md"),
+            "Reloaded request {{candidates}} {{cacheBoundary}}\n",
+            "utf-8",
+        )
 
-        const prompts = new PromptStore(
-            new Logger(false),
-            fixture.workspaceDir,
-            false,
-        ).getRuntimePrompts()
+        store.reload()
 
-        assert.match(prompts.system, /immutable activity blocks and checkpoints/i)
-        assert.doesNotMatch(prompts.system, /Project override/)
-        assert.equal(
-            existsSync(
-                join(
-                    fixture.configHome,
-                    ".config",
-                    "opencode",
-                    "acm",
-                    "prompts",
-                ),
-            ),
-            false,
+        assert.match(store.getRuntimePrompts().compressionRequest, /Reloaded request/)
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test("missing global prompt fails instead of falling back to a bundled copy", () => {
+    const fixture = createPromptFixture()
+    try {
+        rmSync(join(fixture.promptsDir, "compression-request.md"))
+        assert.throws(
+            () => new PromptStore(new Logger(false), fixture.promptsDir),
+            /ACP prompt file is required.*compression-request\.md/,
         )
     } finally {
         fixture.cleanup()
     }
 })
 
-test("custom prompts use project, then ACM global precedence", () => {
-    const fixture = createFixture()
+test("global system prompt reaches the final system transform payload", async () => {
+    const fixture = createPromptFixture()
     try {
-        writePrompt(fixture.globalOverridesDir, "system.md", "Global override")
-        writePrompt(fixture.configOverridesDir, "system.md", "Config override")
-        writePrompt(fixture.projectOverridesDir, "system.md", "Project override")
+        const logger = new Logger(false)
+        const registry = new SessionStateRegistry(logger)
+        const sessionId = "system-prompt-session"
+        const client = { session: { get: async () => ({ data: { parentID: null } }) } }
+        const config = buildConfig()
+        await registry.getOrCreate(client, sessionId, [], config)
+        const handler = createSystemPromptHandler(
+            registry,
+            logger,
+            config,
+            new PromptStore(logger, fixture.promptsDir),
+        )
+        const output = { system: ["Base system"] }
 
-        const prompts = new PromptStore(
-            new Logger(false),
-            fixture.workspaceDir,
-            true,
-        ).getRuntimePrompts()
-
-        assert.match(prompts.system, /Project override/)
-        assert.match(prompts.system, /^<dcp-system-reminder>/)
-        assert.doesNotMatch(prompts.system, /Config override/)
-        assert.doesNotMatch(prompts.system, /Global override/)
-    } finally {
-        fixture.cleanup()
-    }
-})
-
-test("empty and malformed overrides fall back to the next valid layer", () => {
-    const fixture = createFixture()
-    try {
-        writePrompt(fixture.globalOverridesDir, "system.md", "Global fallback")
-        writePrompt(fixture.configOverridesDir, "system.md", "Config fallback")
-        writePrompt(fixture.projectOverridesDir, "system.md", "<dcp-system-reminder>broken")
-
-        const store = new PromptStore(new Logger(false), fixture.workspaceDir, true)
-        assert.match(store.getRuntimePrompts().system, /Global fallback/)
-
-        writePrompt(fixture.projectOverridesDir, "system.md", "   \n")
-        store.reload()
-        assert.match(store.getRuntimePrompts().system, /Global fallback/)
-    } finally {
-        fixture.cleanup()
-    }
-})
-
-test("reload applies normalized overrides and preserves a single wrapper", () => {
-    const fixture = createFixture()
-    try {
-        const store = new PromptStore(new Logger(false), fixture.workspaceDir, true)
-        writePrompt(
-            fixture.globalOverridesDir,
-            "system.md",
-            "\uFEFF<!-- copied comment -->\n<dcp-system-reminder>\nReloaded system\n</dcp-system-reminder>\n",
+        await handler(
+            {
+                sessionID: sessionId,
+                model: { id: "model", providerID: "provider", limit: { context: 200_000 } },
+            },
+            output,
         )
 
-        store.reload()
-        const system = store.getRuntimePrompts().system
-        assert.match(system, /Reloaded system/)
-        assert.equal((system.match(/<dcp-system-reminder>/g) ?? []).length, 1)
-        assert.equal((system.match(/<\/dcp-system-reminder>/g) ?? []).length, 1)
-        assert.doesNotMatch(system, /copied comment/)
+        assert.match(output.system[0], /^Base system/)
+        assert.match(output.system[0], /Global system prompt/)
     } finally {
         fixture.cleanup()
     }

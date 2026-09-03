@@ -88,16 +88,9 @@
                     "type": "boolean",
                     "default": false,
                     "description": "[DEPRECATED — use top-level allowSubAgents] Allow ACP processing in subagent sessions. Kept for backward compat; top-level takes priority."
-                },
-                "customPrompts": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Enable user-editable prompt overrides under acm/prompts directories"
                 }
             },
-            "default": {
-                "customPrompts": false
-            }
+            "default": {}
         },
         "protectedFilePatterns": {
             "type": "array",

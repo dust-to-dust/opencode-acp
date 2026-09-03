@@ -8,14 +8,22 @@ import { createCompressRangeTool } from "../lib/compress/range"
 import { Logger } from "../lib/logger"
 import { assignMessageRefs } from "../lib/message-ids"
 import { injectCompressNudges } from "../lib/messages/inject/inject"
-import { PromptStore } from "../lib/prompts/store"
+import type { RuntimePrompts } from "../lib/prompts/store"
 import { createSessionState, type WithParts } from "../lib/state"
 import { singletonRegistry } from "./registry-stub"
 
 const dataHome = join(tmpdir(), `opencode-acp-selection-tests-${process.pid}`)
 process.env.XDG_DATA_HOME = dataHome
 mkdirSync(dataHome, { recursive: true })
-const runtimePrompts = new PromptStore(new Logger(false)).getRuntimePrompts()
+const runtimePrompts: RuntimePrompts = {
+    system: "System prompt",
+    compressRange: "Compress range",
+    contextLimitNudge: "Context limit",
+    subagentExtension: "Subagent extension",
+    decompressExtension: "Decompress extension",
+    protectedToolsExtension: "Protected tools: {{toolList}}",
+    compressionRequest: "Compress {{candidates}} through {{cacheBoundary}}",
+}
 
 function config(): PluginConfig {
     return {
@@ -24,7 +32,7 @@ function config(): PluginConfig {
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: true, customPrompts: false },
+        allowSubAgents: true,
         protectedFilePatterns: [],
         compress: {
             permission: "allow",

@@ -1,22 +1,19 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import test from "node:test"
 import { buildCompressedBlockGuidance } from "../lib/prompts/extensions/nudge"
-import { PromptStore } from "../lib/prompts/store"
-import { Logger } from "../lib/logger"
 import { createSessionState } from "../lib/state"
 
-const prompts = new PromptStore(new Logger(false)).getRuntimePrompts()
-
-test("TURN_NUDGE uses conditional compression language with decompress safety net", () => {
-    assert.match(prompts.turnNudge, /finished reading/i)
-    assert.match(prompts.turnNudge, /decompress later/i)
-    assert.doesNotMatch(prompts.turnNudge, /\bnow\b/i)
-})
+const contextLimitNudge = readFileSync(
+    join(process.cwd(), "config", "prompts", "context-limit-nudge.md"),
+    "utf-8",
+)
 
 test("CONTEXT_LIMIT_NUDGE frames compression as a step with decompress safety net", () => {
-    assert.match(prompts.contextLimitNudge, /time to compress/i)
-    assert.match(prompts.contextLimitNudge, /decompress/i)
-    assert.doesNotMatch(prompts.contextLimitNudge, /\b(MUST|CRITICAL)\b/)
+    assert.match(contextLimitNudge, /time to compress/i)
+    assert.match(contextLimitNudge, /decompress/i)
+    assert.doesNotMatch(contextLimitNudge, /\b(MUST|CRITICAL)\b/)
 })
 
 test("buildCompressedBlockGuidance shows compact summary with block count", () => {

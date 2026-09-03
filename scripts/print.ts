@@ -17,10 +17,14 @@ function getPromptByKey(prompts: RuntimePrompts, key: PromptKey): string {
             return prompts.compressRange
         case "context-limit-nudge":
             return prompts.contextLimitNudge
-        case "turn-nudge":
-            return prompts.turnNudge
-        case "iteration-nudge":
-            return prompts.iterationNudge
+        case "subagent-extension":
+            return prompts.subagentExtension
+        case "decompress-extension":
+            return prompts.decompressExtension
+        case "protected-tools":
+            return prompts.protectedToolsExtension
+        case "compression-request":
+            return prompts.compressionRequest
     }
 }
 
@@ -43,8 +47,8 @@ Options:
   --system-all             Print system prompt with both extensions
 
 Prompt keys:
-  system, compress-range,
-  context-limit-nudge, turn-nudge, iteration-nudge
+  system, compress-range, context-limit-nudge, subagent-extension,
+  decompress-extension, protected-tools, compression-request
 
 Examples:
   npm run dcp -- --list
@@ -54,7 +58,7 @@ Examples:
     process.exit(0)
 }
 
-const store = new PromptStore(new Logger(false), process.cwd())
+const store = new PromptStore(new Logger(false))
 store.reload()
 
 const runtimePrompts = store.getRuntimePrompts()

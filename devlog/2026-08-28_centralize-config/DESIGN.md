@@ -2,10 +2,10 @@
 
 ## Asset Boundary
 
-Runtime defaults live in package assets:
+Configuration defaults live in package assets:
 
 - `config/acp.jsonc` contains the complete built-in configuration.
-- `config/prompts/*.md` contains fixed prompt text.
+- `config/prompts/*.md` is deployment input for the global ACM prompt directory, not a package-cache asset.
 
 TypeScript owns parsing, validation, layered overrides, dynamic interpolation, and orchestration. It must not duplicate values or prompt paragraphs from those assets.
 
@@ -22,15 +22,14 @@ Malformed optional override files retain the existing warning-and-skip behavior.
 
 ## Prompt Flow
 
-1. Load every bundled prompt asset from `config/prompts/`.
-2. When custom prompts are disabled, use those bundled values directly.
-3. When enabled, resolve project, `$OPENCODE_CONFIG_DIR`, then global prompt overrides.
-4. Keep runtime data interpolation and extension composition in TypeScript.
+1. Deploy missing repository prompt files to `~/.config/opencode/acm/prompts/`.
+2. Load every runtime prompt from that global directory.
+3. Keep runtime data interpolation and extension composition in TypeScript.
 
 ## Packaging
 
-`config/` is an npm package allowlist entry. Package verification checks the config file and every prompt asset explicitly, in addition to the compiled entry points and documentation.
+`config/acp.jsonc` is an npm package allowlist entry. Package verification checks repository prompt sources but rejects `config/prompts/` from the tarball.
 
 ## Compatibility
 
-This refactor changes the storage location of built-in defaults, not the user-facing configuration model. Global/config-dir/project layering and `experimental.customPrompts` remain supported.
+Configuration layering remains supported. Prompt layering was later removed in favor of one global ACM prompt directory.

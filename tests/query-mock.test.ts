@@ -1,10 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import {
-    isMessageCompacted,
-    countTurns,
-    findLastCompactionTimestamp,
-} from "../lib/state/utils"
+import { isMessageCompacted, countTurns, findLastCompactionTimestamp } from "../lib/state/utils"
 import {
     isProtectedUserMessage,
     getLastUserMessage,
@@ -88,15 +84,11 @@ function makeState(overrides: Partial<SessionState> = {}): SessionState {
                 nextRunId: 1,
             },
         },
-        nudges: {
-            contextLimitAnchors: new Set(),
-            turnNudgeAnchors: new Set(),
-            iterationNudgeAnchors: new Set(),
-        },
+        nudges: {},
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
         compressionTiming: {} as any,
         toolParameters: new Map(),
-            toolIdList: [],
+        toolIdList: [],
         messageIds: { byRawId: new Map(), byRef: new Map(), nextRef: 1 },
         lastCompaction: 0,
         currentTurn: 0,
@@ -114,7 +106,7 @@ function makeConfig(overrides: Partial<PluginConfig> = {}): PluginConfig {
         pruneNotification: "detailed",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: {
             permission: "allow",
@@ -258,7 +250,11 @@ test("countTurns counts step-start parts in non-compacted messages", () => {
     const state = makeState({ lastCompaction: 0 })
     const msgs = [
         makeMessage({ role: "assistant", created: 1000, parts: [makeStepStartPart()] }),
-        makeMessage({ role: "assistant", created: 1500, parts: [makeStepStartPart(), makeStepStartPart()] }),
+        makeMessage({
+            role: "assistant",
+            created: 1500,
+            parts: [makeStepStartPart(), makeStepStartPart()],
+        }),
     ]
     assert.equal(countTurns(state, msgs), 3)
 })

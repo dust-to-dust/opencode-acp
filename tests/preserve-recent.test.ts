@@ -50,7 +50,7 @@ function buildConfig(compressOverrides: Partial<PluginConfig["compress"]> = {}):
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: buildCompress(compressOverrides),
         gc: {

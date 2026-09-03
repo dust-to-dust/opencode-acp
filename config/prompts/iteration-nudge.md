@@ -1,1 +1,0 @@
-You have been iterating for a while. If earlier work is closed and unlikely to be referenced again, compress it now so the current task stays focused. You can decompress checkpoints later if exact details are needed.

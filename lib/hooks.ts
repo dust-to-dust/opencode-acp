@@ -132,10 +132,15 @@ export function createSystemPromptHandler(
             ),
             state.isSubAgent && config.allowSubAgents,
         )
+        const pendingSystemNudge = state.nudges.pendingSystemNudge
+        state.nudges.pendingSystemNudge = undefined
+        const systemAddition = pendingSystemNudge
+            ? `${newPrompt}\n\n${pendingSystemNudge}`
+            : newPrompt
         if (output.system.length > 0) {
-            output.system[output.system.length - 1] += "\n\n" + newPrompt
+            output.system[output.system.length - 1] += "\n\n" + systemAddition
         } else {
-            output.system.push(newPrompt)
+            output.system.push(systemAddition)
         }
     }
 }

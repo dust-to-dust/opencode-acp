@@ -28,13 +28,10 @@ const activePromptAssets = [
     "system.md",
     "compress-range.md",
     "context-limit-nudge.md",
-    "turn-nudge.md",
-    "iteration-nudge.md",
     "subagent-extension.md",
     "decompress-extension.md",
     "protected-tools.md",
     "compression-request.md",
-    "how-to-compress.md",
 ]
 
 const forbiddenTarballPatterns = [
@@ -49,6 +46,7 @@ const forbiddenTarballPatterns = [
     /^\.github\//,
     /^package-lock\.json$/,
     /^tsconfig\.json$/,
+    /^config\/prompts\//,
 ]
 
 const packageInfoCache = new Map()
@@ -82,7 +80,7 @@ function assertPackageJsonShape() {
     }
 
     const files = Array.isArray(pkg.files) ? pkg.files : []
-    for (const entry of ["dist/", "config/", "README.md", "LICENSE"]) {
+    for (const entry of ["dist/", "config/acp.jsonc", "README.md", "LICENSE"]) {
         if (!files.includes(entry)) {
             fail(`package.json files must include ${entry}`)
         }
@@ -129,7 +127,6 @@ function assertPromptAssets() {
             fail(`prompt asset contains conflict markers: ${relativePath}`)
         }
 
-        requiredTarballFiles.push(relativePath.replaceAll(path.sep, "/"))
     }
 }
 
@@ -260,7 +257,11 @@ function validatePackedFiles() {
     // reason.
     const packArgs = ["pack", "--dry-run", "--json", "--ignore-scripts"]
     const npmExecPath = process.env.npm_execpath
-    const command = npmExecPath ? process.execPath : process.platform === "win32" ? "cmd.exe" : "npm"
+    const command = npmExecPath
+        ? process.execPath
+        : process.platform === "win32"
+          ? "cmd.exe"
+          : "npm"
     const args = npmExecPath
         ? [npmExecPath, ...packArgs]
         : process.platform === "win32"

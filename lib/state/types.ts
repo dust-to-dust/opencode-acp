@@ -105,10 +105,6 @@ export interface PendingCompression {
 }
 
 export interface Nudges {
-    contextLimitAnchors: Set<string>
-    turnNudgeAnchors: Set<string>
-    iterationNudgeAnchors: Set<string>
-    lastPerMessageNudgeTurn: number
     lastPerMessageNudgeTokens: number | undefined
     /** Approximate token count of eligible content at the last compression baseline. */
     lastCompressibleNudgeTokens: number | undefined
@@ -116,8 +112,10 @@ export interface Nudges {
     lastToolOutputNudgeTokens: number | undefined
     lastTier2NudgeTokens: number | undefined
     lastTier3NudgeTokens: number | undefined
-    /** Set by injectCompressNudges; read by system prompt handler next turn (1-turn lag). Undefined = first turn. */
+    /** Set by injectCompressNudges for diagnostics. Undefined = first turn. */
     shouldInjectThisTurn: boolean | undefined
+    /** Transient system guidance staged by the message transform for the same request. */
+    pendingSystemNudge: string | undefined
     /**
      * Lock flag: prevents baseline leak after compress.
      *

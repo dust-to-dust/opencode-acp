@@ -17,10 +17,7 @@ function buildConfig(maxContextLimit: number, minContextLimit = 1): PluginConfig
             enabled: true,
             protectedTools: [],
         },
-        experimental: {
-            allowSubAgents: false,
-            customPrompts: false,
-        },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: {
             mode: "message",

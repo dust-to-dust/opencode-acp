@@ -117,18 +117,6 @@ Controls ACP slash commands (`/acp context`, `/acp stats`, etc.).
 
 ---
 
-### `experimental`
-
-Experimental features that may change or be removed.
-
-#### `experimental.customPrompts`
-- **Type:** `boolean`
-- **Default:** `false`
-- **Status:** EXPERIMENTAL
-- **Description:** Enable loading custom prompt overrides from `~/.config/opencode/acm/prompts/`.
-
----
-
 ### `compress`
 
 Core compression behavior.

@@ -59,8 +59,6 @@ test("loadSessionState round-trips saved state", async () => {
     const state = createSessionState()
     state.sessionId = TEST_SESSION
     state.stats.totalPruneTokens = 999
-    state.nudges.contextLimitAnchors.add("anchor-1")
-    state.nudges.contextLimitAnchors.add("anchor-2")
     state.modelContextLimit = 200_000
     state.modelProviderID = "prov"
     state.modelID = "model-1m"
@@ -73,8 +71,6 @@ test("loadSessionState round-trips saved state", async () => {
     assert.equal(loaded!.modelContextLimit, 200_000)
     assert.equal(loaded!.modelProviderID, "prov")
     assert.equal(loaded!.modelID, "model-1m")
-    assert.ok(loaded!.nudges.contextLimitAnchors.includes("anchor-1"))
-    assert.ok(loaded!.nudges.contextLimitAnchors.includes("anchor-2"))
     await cleanup()
 })
 
@@ -104,33 +100,6 @@ test("loadSessionState returns null for missing required fields", async () => {
     await cleanup()
 })
 
-test("loadSessionState deduplicates malformed anchor entries", async () => {
-    await cleanup()
-    const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
-    await fs.mkdir(STORAGE_DIR, { recursive: true })
-    const state = {
-        schemaVersion: 3,
-        prune: { messages: { byMessageId: {}, blocksById: {} } },
-        nudges: {
-            contextLimitAnchors: ["a", "a", "b", 123 as any, null as any],
-            turnNudgeAnchors: ["x", "x"],
-        },
-        stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
-        lastUpdated: new Date().toISOString(),
-    }
-    await fs.writeFile(filePath, JSON.stringify(state), "utf-8")
-
-    const result = await loadSessionState(TEST_SESSION, logger)
-    assert.ok(result)
-    const anchors = result!.nudges.contextLimitAnchors
-    assert.ok(anchors.includes("a"))
-    assert.ok(anchors.includes("b"))
-    assert.ok(!anchors.includes(123 as any))
-    const uniqueA = anchors.filter((x) => x === "a")
-    assert.equal(uniqueA.length, 1, "duplicates should be removed")
-    await cleanup()
-})
-
 test("loadSessionState rejects state with a missing schema version", async () => {
     await cleanup()
     const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
@@ -146,7 +115,7 @@ test("loadSessionState rejects state with a missing schema version", async () =>
                 nextRunId: 1,
             },
         },
-        nudges: { contextLimitAnchors: ["a"] },
+        nudges: {},
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
         lastUpdated: new Date().toISOString(),
     }
@@ -165,7 +134,7 @@ test("loadSessionState rejects state with an old schema version", async () => {
     const oldState = {
         schemaVersion: 2,
         prune: { messages: { byMessageId: {}, blocksById: {} } },
-        nudges: { contextLimitAnchors: ["a"] },
+        nudges: {},
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
         lastUpdated: new Date().toISOString(),
     }

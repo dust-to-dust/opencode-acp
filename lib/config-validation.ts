@@ -15,7 +15,6 @@ export const VALID_CONFIG_KEYS = new Set([
     "pruneNotificationType",
     "experimental",
     "experimental.allowSubAgents",
-    "experimental.customPrompts",
     "protectedFilePatterns",
     "commands",
     "commands.enabled",
@@ -180,16 +179,6 @@ export function validateConfigTypes(config: Record<string, any>): ValidationErro
                 })
             }
 
-            if (
-                experimental.customPrompts !== undefined &&
-                typeof experimental.customPrompts !== "boolean"
-            ) {
-                errors.push({
-                    key: "experimental.customPrompts",
-                    expected: "boolean",
-                    actual: typeof experimental.customPrompts,
-                })
-            }
         }
     }
 

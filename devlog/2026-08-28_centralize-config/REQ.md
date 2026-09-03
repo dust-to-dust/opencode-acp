@@ -9,9 +9,9 @@ ACP defaults and built-in prompt text are embedded across TypeScript modules. Th
 - Make `config/acp.jsonc` the sole source of built-in configuration defaults.
 - Make Markdown files under `config/prompts/` the sole source of built-in prompt text.
 - Preserve global and project configuration layering over the bundled defaults.
-- Preserve opt-in global and project prompt overrides.
+- This historical prompt-override requirement is superseded: runtime prompts now have one global ACM source.
 - Keep dynamic runtime values and prompt composition in TypeScript.
-- Include every required runtime asset in the npm package and verify the tarball contents.
+- Include required configuration assets in the npm package while excluding prompt files from the cache.
 - Keep the existing ACP/DCP compatibility identifiers unchanged.
 - Do not add runtime dependencies for this refactor.
 
@@ -20,7 +20,7 @@ ACP defaults and built-in prompt text are embedded across TypeScript modules. Th
 - The plugin loads bundled defaults without user configuration.
 - Global and project config files override only the values they specify.
 - Protected tools still include the mandatory `compress` tool after overrides.
-- Prompt overrides remain gated by `experimental.customPrompts` and follow global-then-project precedence.
+- Prompt loading uses the global ACM directory with no feature gate or project precedence.
 - Prompt preview tooling lists and renders every public prompt key without stale references.
 - Missing, empty, or invalid bundled assets fail with actionable errors.
 - Type checking, tests, formatting, package verification, and tarball inspection pass.

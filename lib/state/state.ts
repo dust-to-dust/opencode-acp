@@ -15,7 +15,6 @@ import {
     resetOnCompaction,
     createPruneMessagesState,
     loadPruneMessagesState,
-    collectTurnNudgeAnchors,
 } from "./utils"
 
 /**
@@ -163,10 +162,6 @@ export function createSessionState(): SessionState {
             messages: createPruneMessagesState(),
         },
         nudges: {
-            contextLimitAnchors: new Set<string>(),
-            turnNudgeAnchors: new Set<string>(),
-            iterationNudgeAnchors: new Set<string>(),
-            lastPerMessageNudgeTurn: 0,
             lastPerMessageNudgeTokens: undefined,
             lastCompressibleNudgeTokens: undefined,
             lastNudgeShownTokens: undefined,
@@ -174,6 +169,7 @@ export function createSessionState(): SessionState {
             lastTier2NudgeTokens: undefined,
             lastTier3NudgeTokens: undefined,
             shouldInjectThisTurn: undefined,
+            pendingSystemNudge: undefined,
             compressBaselineSet: false,
             lastProcessedCompressMessageId: undefined,
             pendingCompression: undefined,
@@ -211,10 +207,6 @@ export function resetSessionState(state: SessionState): void {
         messages: createPruneMessagesState(),
     }
     state.nudges = {
-        contextLimitAnchors: new Set<string>(),
-        turnNudgeAnchors: new Set<string>(),
-        iterationNudgeAnchors: new Set<string>(),
-        lastPerMessageNudgeTurn: 0,
         lastPerMessageNudgeTokens: undefined,
         lastCompressibleNudgeTokens: undefined,
         lastNudgeShownTokens: undefined,
@@ -222,6 +214,7 @@ export function resetSessionState(state: SessionState): void {
         lastTier2NudgeTokens: undefined,
         lastTier3NudgeTokens: undefined,
         shouldInjectThisTurn: undefined,
+        pendingSystemNudge: undefined,
         compressBaselineSet: false,
         lastProcessedCompressMessageId: undefined,
         pendingCompression: undefined,
@@ -266,7 +259,6 @@ export async function ensureSessionInitialized(
 
     state.lastCompaction = findLastCompactionTimestamp(messages)
     state.currentTurn = countTurns(state, messages)
-    state.nudges.turnNudgeAnchors = collectTurnNudgeAnchors(messages)
 
     const persisted = await loadSessionState(sessionId, logger)
     if (persisted === null) {
@@ -276,15 +268,6 @@ export async function ensureSessionInitialized(
     }
 
     state.prune.messages = loadPruneMessagesState(persisted.prune.messages)
-    state.nudges.contextLimitAnchors = new Set<string>(persisted.nudges.contextLimitAnchors || [])
-    state.nudges.turnNudgeAnchors = new Set<string>([
-        ...state.nudges.turnNudgeAnchors,
-        ...(persisted.nudges.turnNudgeAnchors || []),
-    ])
-    state.nudges.iterationNudgeAnchors = new Set<string>(
-        persisted.nudges.iterationNudgeAnchors || [],
-    )
-    state.nudges.lastPerMessageNudgeTurn = persisted.nudges.lastPerMessageNudgeTurn ?? 0
     state.nudges.lastPerMessageNudgeTokens = persisted.nudges.lastPerMessageNudgeTokens
     state.nudges.lastCompressibleNudgeTokens = persisted.nudges.lastCompressibleNudgeTokens
     state.nudges.lastNudgeShownTokens = persisted.nudges.lastNudgeShownTokens

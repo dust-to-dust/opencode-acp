@@ -2,7 +2,7 @@
     "$schema": "https://raw.githubusercontent.com/ranxianglei/opencode-acp/master/dcp.schema.json",
     "enabled": true,
     "autoUpdate": true,
-    "debug": false,
+    "debug": true,
     "logLevel": "info",
     "allowSubAgents": true,
     "pruneNotification": "off",
@@ -20,22 +20,30 @@
             "plan_enter",
             "plan_exit",
             "write",
-            "edit",
-        ],
-    },
-    "experimental": {
-        "customPrompts": false,
+            "edit"
+        ]
     },
     "protectedFilePatterns": [],
     "compress": {
         "permission": "allow",
         "showCompression": true,
         "summaryBuffer": true,
-        "maxContextLimit": "80%",
-        "minContextLimit": "80%",
+        "maxContextLimit": "55%",
+        "minContextLimit": "45%",
+        "modelMaxLimits": {
+            "openai/gpt-5.6-sol": 220000,
+            "openai/gpt-5.6-luna": 200000
+        },
+        "modelMinLimits": {
+            "openai/gpt-5.6-sol": 160000,
+            "openai/gpt-5.6-luna": 140000
+        },
         "minNudgeContextPercent": 5,
         "nudgeForce": "soft",
-        "protectedTools": ["skill", "compress"],
+        "protectedTools": [
+            "skill",
+            "compress"
+        ],
         "protectTags": false,
         "protectUserMessages": false,
         "maxSummaryLengthHard": 20000,
@@ -49,7 +57,7 @@
         "lastSegmentSoftBlock": true,
         "preserveRecentMessages": 5,
         "preserveRecentTokens": 5000,
-        "preserveLastUserMessage": true,
+        "preserveLastUserMessage": true
     },
     "gc": {
         "algorithm": "truncate",
@@ -60,29 +68,32 @@
         "batchCleanup": {
             "lowThreshold": "55%",
             "highThreshold": "75%",
-            "forceThreshold": "90%",
-        },
+            "forceThreshold": "90%"
+        }
     },
     "qualityGate": {
         "enabled": false,
         "algorithm": "rouge-recall-v1",
-        "algorithms": {
-            "rouge-recall-v1": {
-                "layer1MinChars": 200,
-                "layer1MinRetentionPct": 5,
-                "layer2MaxRougeF1": 0.05,
-                "layer2MaxTop20Recall": 0.2,
-            },
-        },
+        "algorithms": {}
     },
     "messageFilters": {
         "enabled": true,
         "filters": {
-            "omo-system-reminder": { "enabled": true },
-            "omo-todo-continuation": { "enabled": true },
-            "omo-context": { "enabled": true },
-            "omo-task-directive": { "enabled": true },
-            "omo-mode-injection": { "enabled": true },
-        },
-    },
+            "omo-system-reminder": {
+                "enabled": true
+            },
+            "omo-todo-continuation": {
+                "enabled": true
+            },
+            "omo-context": {
+                "enabled": true
+            },
+            "omo-task-directive": {
+                "enabled": true
+            },
+            "omo-mode-injection": {
+                "enabled": true
+            }
+        }
+    }
 }

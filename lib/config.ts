@@ -64,10 +64,6 @@ export interface Commands {
     protectedTools: string[]
 }
 
-export interface ExperimentalConfig {
-    customPrompts: boolean
-}
-
 export interface BatchCleanupConfig {
     lowThreshold: Limit
     highThreshold: Limit
@@ -107,7 +103,6 @@ export interface PluginConfig {
     pruneNotification: "off" | "minimal" | "detailed"
     pruneNotificationType: "chat" | "toast"
     commands: Commands
-    experimental: ExperimentalConfig
     protectedFilePatterns: string[]
     compress: CompressConfig
     gc: GCConfig
@@ -117,7 +112,6 @@ export interface PluginConfig {
 
 type CompressOverride = Partial<CompressConfig>
 type CommandsOverride = Partial<Commands>
-type ExperimentalOverride = Partial<ExperimentalConfig> & { allowSubAgents?: boolean }
 type GCOverride = Partial<Omit<GCConfig, "batchCleanup">> & {
     batchCleanup?: Partial<BatchCleanupConfig>
 }
@@ -137,7 +131,6 @@ interface ConfigLayer extends Record<string, unknown> {
     pruneNotification?: PluginConfig["pruneNotification"]
     pruneNotificationType?: PluginConfig["pruneNotificationType"]
     commands?: CommandsOverride
-    experimental?: ExperimentalOverride
     protectedFilePatterns?: string[]
     compress?: CompressOverride
     gc?: GCOverride
@@ -289,7 +282,6 @@ function isMessageFilters(value: unknown): value is MessageFiltersConfig {
 
 function isPluginConfig(value: unknown): value is PluginConfig {
     if (!isRecord(value)) return false
-    const experimental = value.experimental
     return (
         typeof value.enabled === "boolean" &&
         typeof value.autoUpdate === "boolean" &&
@@ -301,8 +293,6 @@ function isPluginConfig(value: unknown): value is PluginConfig {
             value.pruneNotification === "detailed") &&
         (value.pruneNotificationType === "chat" || value.pruneNotificationType === "toast") &&
         isCommands(value.commands) &&
-        isRecord(experimental) &&
-        typeof experimental.customPrompts === "boolean" &&
         isStringArray(value.protectedFilePatterns) &&
         isCompress(value.compress) &&
         isGC(value.gc) &&
@@ -554,10 +544,9 @@ function parseConfigLayer(value: Record<string, unknown>): ConfigLayer {
         )
         layer.commands = commands
     }
-    if (isRecord(value.experimental)) {
-        const experimental: ExperimentalOverride = {}
+    if (layer.allowSubAgents === undefined && isRecord(value.experimental)) {
         assignIfDefined(
-            experimental,
+            layer,
             "allowSubAgents",
             readProperty(
                 value.experimental,
@@ -565,16 +554,6 @@ function parseConfigLayer(value: Record<string, unknown>): ConfigLayer {
                 (v): v is boolean => typeof v === "boolean",
             ),
         )
-        assignIfDefined(
-            experimental,
-            "customPrompts",
-            readProperty(
-                value.experimental,
-                "customPrompts",
-                (v): v is boolean => typeof v === "boolean",
-            ),
-        )
-        layer.experimental = experimental
     }
     assignIfDefined(
         layer,
@@ -808,14 +787,6 @@ function mergeCommands(base: Commands, override?: CommandsOverride): Commands {
     }
 }
 
-function mergeExperimental(
-    base: ExperimentalConfig,
-    override?: ExperimentalOverride,
-): ExperimentalConfig {
-    if (!override) return base
-    return { customPrompts: override.customPrompts ?? base.customPrompts }
-}
-
 function cloneValue(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(cloneValue)
     if (isRecord(value)) {
@@ -839,7 +810,6 @@ export function deepCloneConfig(config: PluginConfig): PluginConfig {
             enabled: config.commands.enabled,
             protectedTools: [...config.commands.protectedTools],
         },
-        experimental: { ...config.experimental },
         protectedFilePatterns: [...config.protectedFilePatterns],
         compress: {
             ...config.compress,
@@ -959,12 +929,10 @@ function mergeLayer(config: PluginConfig, data: ConfigLayer): PluginConfig {
         autoUpdate: data.autoUpdate ?? config.autoUpdate,
         debug: data.debug ?? config.debug,
         logLevel: data.logLevel ?? config.logLevel,
-        allowSubAgents:
-            data.allowSubAgents ?? data.experimental?.allowSubAgents ?? config.allowSubAgents,
+        allowSubAgents: data.allowSubAgents ?? config.allowSubAgents,
         pruneNotification: data.pruneNotification ?? config.pruneNotification,
         pruneNotificationType: data.pruneNotificationType ?? config.pruneNotificationType,
         commands: mergeCommands(config.commands, data.commands),
-        experimental: mergeExperimental(config.experimental, data.experimental),
         protectedFilePatterns: [
             ...new Set([...config.protectedFilePatterns, ...(data.protectedFilePatterns ?? [])]),
         ],

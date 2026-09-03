@@ -89,10 +89,6 @@ function makeEmptyState(): SessionState {
             },
         },
         nudges: {
-            contextLimitAnchors: new Set(),
-            turnNudgeAnchors: new Set(),
-            iterationNudgeAnchors: new Set(),
-            lastPerMessageNudgeTurn: 0,
             lastPerMessageNudgeTokens: undefined,
             lastNudgeShownTokens: undefined,
             lastToolOutputNudgeTokens: undefined,

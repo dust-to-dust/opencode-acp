@@ -72,7 +72,7 @@
     },
     "files": [
         "dist/",
-        "config/",
+        "config/acp.jsonc",
         "README.md",
         "README.zh-CN.md",
         "LICENSE",

@@ -10,7 +10,7 @@
 
 - **Context**: Runtime ACP configuration and customizable prompts currently use separate global and config-directory locations.
 - **Current behavior (symptom)**: The plugin reads global files from `~/.config/opencode`, optionally reads `$OPENCODE_CONFIG_DIR`, and the development deploy script omits the packaged `config/` assets.
-- **Expected behavior**: User configuration is rooted at `~/.config/opencode/acm`; global prompt files are in `~/.config/opencode/acm/prompts/`, project prompt overrides are in the current project's `.opencode/prompts/`, and only those two roots are inspected. Local deployment must include all runtime package assets.
+- **Expected behavior at completion**: User configuration is rooted at `~/.config/opencode/acm`; the then-supported project prompt layer was superseded on 2026-09-03 by the single global prompt source requirement.
 - **Impact**: Configuration is difficult to locate and local deployments can fail to load bundled prompts/configuration.
 
 ## 2. Reproduction (if applicable)
@@ -27,7 +27,7 @@
 
 - **Constraints**:
   - Do not add runtime dependencies.
-  - Preserve the bundled `config/acp.jsonc` and `config/prompts/` package asset boundary.
+  - This historical package prompt boundary was superseded; prompt files are now excluded from the cache package.
   - Preserve project override precedence over the global configuration.
   - Preserve ACP/DCP compatibility identifiers and existing prompt interpolation behavior.
   - Do not modify `package.json` version.
@@ -39,10 +39,10 @@
    - [x] Global config resolves only from `~/.config/opencode/acm/acp.jsonc` or `acp.json`.
    - [x] Global prompt files resolve only below `~/.config/opencode/acm/prompts/`.
    - [x] `$OPENCODE_CONFIG_DIR` is not read for ACP config or prompt overrides.
-   - [x] Project prompt overrides are read from the current project's `.opencode/prompts/` directory only.
-   - [x] Development deployment copies `config/` to both supported plugin cache targets.
+   - [x] Historical project prompt precedence was implemented and later removed.
+   - [x] Development deployment behavior was later changed to copy only `config/acp.jsonc` into plugin cache targets.
 - **Performance / Stability**:
-   - [x] Missing optional overrides retain current fallback behavior.
+   - [x] Historical optional prompt fallback behavior was later removed.
 - **Regression**:
    - [x] New/modified tests cover the path and precedence changes and pass.
 

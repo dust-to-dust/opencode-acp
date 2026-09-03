@@ -22,7 +22,7 @@ function makeConfig(gc?: Partial<PluginConfig["gc"]>): PluginConfig {
         pruneNotification: "off",
         pruneNotificationType: "chat",
         commands: { enabled: true, protectedTools: [] },
-        experimental: { allowSubAgents: false, customPrompts: false },
+        allowSubAgents: false,
         protectedFilePatterns: [],
         compress: {
             permission: "allow",
@@ -73,10 +73,6 @@ function makeState(modelContextLimit: number = 200000): SessionState {
             },
         },
         nudges: {
-            contextLimitAnchors: new Set(),
-            turnNudgeAnchors: new Set(),
-            iterationNudgeAnchors: new Set(),
-            lastPerMessageNudgeTurn: 0,
             lastPerMessageNudgeTokens: undefined,
             lastNudgeShownTokens: undefined,
             lastToolOutputNudgeTokens: undefined,

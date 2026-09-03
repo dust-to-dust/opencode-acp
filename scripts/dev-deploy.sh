@@ -162,10 +162,12 @@ fi
 
 info "Deploying version: v$DEPLOY_VER"
 
-# Copy the compiled code, package metadata, and file-backed runtime assets.
+# Copy compiled code, package metadata, and the bundled configuration only.
+# Prompt files live exclusively in the global ACM configuration directory.
 cp -r "$PROJECT_ROOT/dist/"* "$DEPLOY_TARGET/dist/"
 rm -rf "$DEPLOY_TARGET/config"
-cp -r "$PROJECT_ROOT/config" "$DEPLOY_TARGET/config"
+mkdir -p "$DEPLOY_TARGET/config"
+cp "$PROJECT_ROOT/config/acp.jsonc" "$DEPLOY_TARGET/config/acp.jsonc"
 cp "$PROJECT_ROOT/package.json" "$DEPLOY_TARGET/package.json"
 
 # Patch version in deployed package.json if bumped (don't touch source tree)
@@ -193,7 +195,8 @@ DEPLOYED_VER=$(ACP_PACKAGE_JSON="$DEPLOYED_PACKAGE_JSON" node -p "require(proces
 if [[ -d "$LEGACY_TARGET/dist" ]]; then
     cp -r "$PROJECT_ROOT/dist/"* "$LEGACY_TARGET/dist/"
     rm -rf "$LEGACY_TARGET/config"
-    cp -r "$PROJECT_ROOT/config" "$LEGACY_TARGET/config"
+    mkdir -p "$LEGACY_TARGET/config"
+    cp "$PROJECT_ROOT/config/acp.jsonc" "$LEGACY_TARGET/config/acp.jsonc"
     cp "$PROJECT_ROOT/package.json" "$LEGACY_TARGET/package.json"
     if [[ "$DEPLOY_VER" != "$LOCAL_VER" ]]; then
         ACP_PACKAGE_JSON="$(node_path "$LEGACY_TARGET/package.json")" node -e "
@@ -216,8 +219,8 @@ else
 fi
 
 # ── Step 6: Initialize user-editable ACM files ─────────────────────────────
-# Keep package assets in the plugin cache, but also expose a safe editable copy
-# in the runtime config directory. Never overwrite an existing user file.
+# Prompt files have one runtime location. Deploy missing defaults without
+# overwriting user edits, and remove obsolete files that no runtime path reads.
 
 step "Initializing ACM config directory: $ACM_CONFIG_DIR"
 mkdir -p "$ACM_PROMPTS_DIR"
@@ -231,13 +234,20 @@ for prompt_name in \
     system \
     compress-range \
     context-limit-nudge \
-    turn-nudge \
-    iteration-nudge; do
+    subagent-extension \
+    decompress-extension \
+    protected-tools \
+    compression-request; do
     prompt_path="$ACM_PROMPTS_DIR/$prompt_name.md"
     if [[ ! -f "$prompt_path" ]]; then
         cp "$PROJECT_ROOT/config/prompts/$prompt_name.md" "$prompt_path"
     fi
 done
+
+rm -f \
+    "$ACM_PROMPTS_DIR/turn-nudge.md" \
+    "$ACM_PROMPTS_DIR/iteration-nudge.md" \
+    "$ACM_PROMPTS_DIR/how-to-compress.md"
 
 info "ACM prompts: $ACM_PROMPTS_DIR"
 

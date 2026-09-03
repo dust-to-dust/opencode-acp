@@ -75,7 +75,7 @@ Mocked dependencies (client, filesystem). Test real module logic end-to-end.
 | `compression-groups.test.ts` | `lib/compress/message.ts`, `lib/compress/range.ts`, `lib/commands/decompress.ts`, `lib/commands/recompress.ts` | Grouped run lifecycle: compress → decompress → recompress across both modes |
 | `compression-targets.test.ts` | `lib/commands/compression-targets.ts` | `getActiveCompressionTargets` — grouping by `runId`, duration aggregation |
 | `hooks-permission.test.ts` | `lib/hooks.ts` | `createChatMessageTransformHandler`, `createCommandExecuteHandler`, `createTextCompleteHandler`, `createEventHandler` — permission enforcement, hallucination stripping, event timing |
-| `prompts.test.ts` | `lib/prompts/store.ts`, `lib/prompts/system.ts` | `PromptStore` — defaults, overrides, file-based loading |
+| `prompts.test.ts` | `lib/prompts/store.ts`, `lib/prompts/system.ts` | `PromptStore` — global-only file loading, reloads, and missing-file failures |
 | `token-usage.test.ts` | `lib/messages/inject/utils.ts`, `lib/compress/state.ts`, `lib/token-utils.ts` | `isContextOverLimits`, `wrapCompressedSummary`, `getCurrentTokenUsage` — context threshold calculation |
 
 ### E2E Tests — Full Pipeline
@@ -153,7 +153,6 @@ function buildConfig(mode: "message" | "range" = "message"): PluginConfig {
         pruneNotificationType: "toast",
         commands: { enabled: true, protectedTools: [] },
         allowSubAgents: false,
-        experimental: { customPrompts: false },
         protectedFilePatterns: [],
         compress: {
             mode,
@@ -443,7 +442,6 @@ function buildConfig(): PluginConfig {
         pruneNotificationType: "toast",
         commands: { enabled: true, protectedTools: [] },
         allowSubAgents: false,
-        experimental: { customPrompts: false },
         protectedFilePatterns: [],
         compress: {
             mode: "range",

@@ -301,12 +301,6 @@ Project settings take priority over global. Restart OpenCode after making config
     // tools only run when explicitly triggered via /acp commands
     // Allow ACP processing in subagent sessions (default: true)
     "allowSubAgents": true,
-    // Experimental settings
-    "experimental": {
-        // Enable user-editable prompt files under the acm/prompts directory
-        // When false (default), prompt files are ignored
-        "customPrompts": false,
-    },
     // Protect file operations from pruning via glob patterns
     // Patterns match tool parameters.filePath (e.g. read/write/edit)
     "protectedFilePatterns": [],
@@ -442,23 +436,19 @@ Not overridable here: `permission`, the deprecated `minContextLimit` / `modelMin
 
 See the [`compress.providers`](./CONFIGURATION.md#compressproviders) reference in CONFIGURATION.md for the full field list and recipes.
 
-### Prompt Overrides
+### Global Prompts
 
-ACP exposes five editable prompts:
+ACP loads seven runtime prompts exclusively from `~/.config/opencode/acm/prompts/`:
 
 - `system`
 - `compress-range`
 - `context-limit-nudge`
-- `turn-nudge`
-- `iteration-nudge`
+- `subagent-extension`
+- `decompress-extension`
+- `protected-tools`
+- `compression-request`
 
-This feature is disabled by default. Set `experimental.customPrompts` to `true` in your ACP config to activate it.
-
-When enabled, managed prompt files are written to `~/.config/opencode/acm/prompts/` as plain text. A single `README.md` in that directory explains each prompt.
-
-To customize behavior globally, edit the matching file under `~/.config/opencode/acm/prompts/`. For a project-only override, add it under `.opencode/prompts/` in the project root. Project overrides take priority over global prompts.
-
-To reset a global prompt, delete the matching file from `~/.config/opencode/acm/prompts/`. To reset a project prompt, delete it from `.opencode/prompts/`.
+There is no feature flag, project override, or cached-package fallback. Edit these files directly for global customization. The development deploy script installs missing defaults without overwriting existing edits. If a required file is removed, redeploy it before restarting OpenCode.
 
 ### Protected Tools
 

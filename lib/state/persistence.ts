@@ -35,10 +35,6 @@ export interface PersistedPrune {
 }
 
 export interface PersistedNudges {
-    contextLimitAnchors: string[]
-    turnNudgeAnchors?: string[]
-    iterationNudgeAnchors?: string[]
-    lastPerMessageNudgeTurn?: number
     lastPerMessageNudgeTokens?: number
     lastCompressibleNudgeTokens?: number
     lastNudgeShownTokens?: number
@@ -131,10 +127,6 @@ export async function saveSessionState(
             messages: serializePruneMessagesState(sessionState.prune.messages),
         },
         nudges: {
-            contextLimitAnchors: Array.from(sessionState.nudges.contextLimitAnchors),
-            turnNudgeAnchors: Array.from(sessionState.nudges.turnNudgeAnchors),
-            iterationNudgeAnchors: Array.from(sessionState.nudges.iterationNudgeAnchors),
-            lastPerMessageNudgeTurn: sessionState.nudges.lastPerMessageNudgeTurn ?? 0,
             lastPerMessageNudgeTokens: sessionState.nudges.lastPerMessageNudgeTokens,
             lastCompressibleNudgeTokens: sessionState.nudges.lastCompressibleNudgeTokens,
             lastNudgeShownTokens: sessionState.nudges.lastNudgeShownTokens,
@@ -189,54 +181,6 @@ export async function loadSessionState(
             })
             return null
         }
-
-        const rawContextLimitAnchors = Array.isArray(state.nudges.contextLimitAnchors)
-            ? state.nudges.contextLimitAnchors
-            : []
-        const validAnchors = rawContextLimitAnchors.filter(
-            (entry): entry is string => typeof entry === "string",
-        )
-        const dedupedAnchors = [...new Set(validAnchors)]
-        if (validAnchors.length !== rawContextLimitAnchors.length) {
-            logger.warn("Filtered out malformed contextLimitAnchors entries", {
-                sessionId: sessionId,
-                original: rawContextLimitAnchors.length,
-                valid: validAnchors.length,
-            })
-        }
-        state.nudges.contextLimitAnchors = dedupedAnchors
-
-        const rawTurnNudgeAnchors = Array.isArray(state.nudges.turnNudgeAnchors)
-            ? state.nudges.turnNudgeAnchors
-            : []
-        const validSoftAnchors = rawTurnNudgeAnchors.filter(
-            (entry): entry is string => typeof entry === "string",
-        )
-        const dedupedSoftAnchors = [...new Set(validSoftAnchors)]
-        if (validSoftAnchors.length !== rawTurnNudgeAnchors.length) {
-            logger.warn("Filtered out malformed turnNudgeAnchors entries", {
-                sessionId: sessionId,
-                original: rawTurnNudgeAnchors.length,
-                valid: validSoftAnchors.length,
-            })
-        }
-        state.nudges.turnNudgeAnchors = dedupedSoftAnchors
-
-        const rawIterationNudgeAnchors = Array.isArray(state.nudges.iterationNudgeAnchors)
-            ? state.nudges.iterationNudgeAnchors
-            : []
-        const validIterationAnchors = rawIterationNudgeAnchors.filter(
-            (entry): entry is string => typeof entry === "string",
-        )
-        const dedupedIterationAnchors = [...new Set(validIterationAnchors)]
-        if (validIterationAnchors.length !== rawIterationNudgeAnchors.length) {
-            logger.warn("Filtered out malformed iterationNudgeAnchors entries", {
-                sessionId: sessionId,
-                original: rawIterationNudgeAnchors.length,
-                valid: validIterationAnchors.length,
-            })
-        }
-        state.nudges.iterationNudgeAnchors = dedupedIterationAnchors
 
         const persistedMessageIds = (state as any).messageIds as PersistedMessageIds | undefined
         if (persistedMessageIds) {

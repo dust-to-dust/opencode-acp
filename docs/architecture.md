@@ -12,7 +12,7 @@ This document contains implementation detail that is useful when changing ACP ar
 | `lib/compress/` | Semantic checkpoint compression, decompression, state mutation, timing, and quality gates. |
 | `lib/messages/` | Message querying, shaping, filtering, pruning, synchronization, IDs, token accounting, and nudges. |
 | `lib/state/` | Session state, persistence, tool cache, model limits, and state utilities. |
-| `lib/prompts/` | Fixed prompt loading, dynamic prompt composition, and prompt extensions. |
+| `lib/prompts/` | Global prompt loading, dynamic prompt composition, and prompt extensions. |
 | `lib/gc/` | Age-based cleanup, summary truncation, and emergency context cleanup. |
 | `lib/commands/` | `/acp` and `/dcp` command handlers. |
 | `lib/ui/` | Notifications and context/stat formatting. |
@@ -80,6 +80,6 @@ Protection is enforced at candidate-selection and pruning layers, not only in ch
 
 - Session persistence is under the OpenCode storage area, normally `~/.local/share/opencode/storage/plugin/acp/{sessionId}.json`; honor the platform's configured data root.
 - Built-in configuration comes from `config/acp.jsonc`; optional user layers apply global `~/.config/opencode/acm`, then the nearest project `.opencode` overrides.
-- Built-in fixed prompts come from `config/prompts/`; when `experimental.customPrompts` is enabled, editable prompts resolve the nearest project `.opencode/prompts/`, then `~/.config/opencode/acm/prompts/`.
+- Runtime prompts come exclusively from `~/.config/opencode/acm/prompts/`; repository prompt files are deployment inputs and are not copied into the cached plugin package.
 - Runtime values such as token counts, candidate IDs, cache boundaries, checkpoint ages, and statistics stay in TypeScript and are interpolated into prompt templates.
-- Package assets required at runtime must be included in the npm package allowlist and verified by `scripts/verify-package.mjs`.
+- Runtime package assets must be included in the npm package allowlist and verified by `scripts/verify-package.mjs`; prompt assets are explicitly forbidden from the package cache.

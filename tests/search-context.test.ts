@@ -63,10 +63,6 @@ function makeState(blocks: Map<number, CompressionBlock>): SessionState {
             },
         },
         nudges: {
-            contextLimitAnchors: new Set(),
-            turnNudgeAnchors: new Set(),
-            iterationNudgeAnchors: new Set(),
-            lastPerMessageNudgeTurn: 0,
             lastPerMessageNudgeTokens: undefined,
         },
         stats: { pruneTokenCounter: 0, totalPruneTokens: 0 },
