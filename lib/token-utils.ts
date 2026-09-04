@@ -1,3 +1,4 @@
+/** token 统计优先使用模型快照，并补计快照之后的新消息。 */
 import { SessionState, WithParts } from "./state"
 import { AssistantMessage, UserMessage } from "@opencode-ai/sdk/v2"
 import { Logger } from "./logger"
@@ -41,7 +42,11 @@ export function getCurrentTokenUsage(state: SessionState, messages: WithParts[])
         // opencode session.ts: adjustedInputTokens = inputTokens - cacheRead - cacheWrite
         // So: input + cacheRead + cacheWrite = prompt_tokens (total input)
         // Total context usage = prompt_tokens + output + reasoning
-        return input + cacheRead + cacheWrite + output + reasoning
+        const snapshotTokens = input + cacheRead + cacheWrite + output + reasoning
+        const trailingTokens = messages
+            .slice(i + 1)
+            .reduce((total, trailingMessage) => total + countAllMessageTokens(trailingMessage), 0)
+        return snapshotTokens + trailingTokens
     }
 
     // [FIX Bug 5] fallback: estimate from all content (text + tool outputs)

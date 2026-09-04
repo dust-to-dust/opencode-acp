@@ -1,5 +1,5 @@
-/** 提示词默认读取插件内置文件；生产环境按文件优先读取全局 ACM 副本。 */
-import { existsSync, readFileSync } from "fs"
+/** 提示词按文件变化刷新；未变化时复用内存内容，避免每轮同步读盘。 */
+import { existsSync, readFileSync, statSync } from "fs"
 import { homedir } from "os"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
@@ -30,6 +30,8 @@ interface PromptDefinition {
     runtimeField: keyof RuntimePrompts
     wrapAsSystemReminder: boolean
 }
+
+type PromptCache = Map<string, { mtimeMs: number; size: number; content: string }>
 
 const PROMPT_DEFINITIONS: readonly PromptDefinition[] = [
     {
@@ -100,11 +102,16 @@ function readPrompt(
     production: boolean,
     globalPromptsDir: string,
     bundledPromptsDir: string,
+    cache?: PromptCache,
 ): string {
     const globalPath = join(globalPromptsDir, definition.fileName)
-    const filePath = production && existsSync(globalPath)
-        ? globalPath
-        : join(bundledPromptsDir, definition.fileName)
+    const filePath =
+        production && existsSync(globalPath)
+            ? globalPath
+            : join(bundledPromptsDir, definition.fileName)
+    const stat = statSync(filePath)
+    const cached = cache?.get(filePath)
+    if (cached?.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.content
     let content: string
     try {
         content = readFileSync(filePath, "utf-8")
@@ -114,6 +121,7 @@ function readPrompt(
         )
     }
 
+    cache?.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, content })
     const prompt = toPromptText(definition, content)
     if (!prompt) {
         throw new Error(`ACP prompt file is empty or invalid: ${filePath}`)
@@ -149,6 +157,7 @@ function loadRuntimePrompts(
     production: boolean,
     globalPromptsDir: string,
     bundledPromptsDir: string,
+    cache?: PromptCache,
 ): RuntimePrompts {
     const prompts = {} as RuntimePrompts
     for (const definition of PROMPT_DEFINITIONS) {
@@ -157,6 +166,7 @@ function loadRuntimePrompts(
             production,
             globalPromptsDir,
             bundledPromptsDir,
+            cache,
         )
     }
     return prompts
@@ -164,6 +174,7 @@ function loadRuntimePrompts(
 
 export class PromptStore {
     private runtimePrompts: RuntimePrompts
+    private readonly cache: PromptCache = new Map()
 
     constructor(
         _logger: Logger,
@@ -175,6 +186,7 @@ export class PromptStore {
             this.production,
             this.globalPromptsDir,
             this.bundledPromptsDir,
+            this.cache,
         )
     }
 
@@ -187,6 +199,7 @@ export class PromptStore {
             this.production,
             this.globalPromptsDir,
             this.bundledPromptsDir,
+            this.cache,
         )
     }
 }

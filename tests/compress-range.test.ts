@@ -147,8 +147,8 @@ test("compresses the complement of keep into one B checkpoint", async () => {
     const sessionID = `selection-complement-${Date.now()}`
     const messages = [
         message(sessionID, "user-1", "user", "request", 1),
-        message(sessionID, "assistant-1", "assistant", "finished result one", 2),
-        message(sessionID, "assistant-2", "assistant", "finished result two", 3),
+        message(sessionID, "assistant-1", "assistant", "finished result one ".repeat(100), 2),
+        message(sessionID, "assistant-2", "assistant", "finished result two ".repeat(100), 3),
         message(sessionID, "user-2", "user", "continue", 4),
     ]
     const { state, compress } = setup(messages)
@@ -179,7 +179,7 @@ test("debug logs the complete compress tool call without truncating input", asyn
     const sessionID = `selection-debug-log-${Date.now()}`
     const messages = [
         message(sessionID, "user-1", "user", "request", 1),
-        message(sessionID, "assistant-1", "assistant", "finished result", 2),
+        message(sessionID, "assistant-1", "assistant", "finished result ".repeat(100), 2),
         message(sessionID, "user-2", "user", "continue", 3),
     ]
     const debugMessages: string[] = []
@@ -216,14 +216,14 @@ test("debug logs the complete compress tool call without truncating input", asyn
 
 test("compresses every message in a tool activity atomically", async () => {
     const sessionID = `selection-tool-activity-${Date.now()}`
-    const call = message(sessionID, "assistant-call", "assistant", "calling tool", 2)
+    const call = message(sessionID, "assistant-call", "assistant", "calling tool ".repeat(100), 2)
     call.parts.push({
         type: "tool",
         tool: "bash",
         callID: "tool-call-1",
         state: { status: "running", input: { command: "pwd" } },
     } as WithParts["parts"][number])
-    const result = message(sessionID, "tool-result", "user", "tool result", 3)
+    const result = message(sessionID, "tool-result", "user", "tool result ".repeat(100), 3)
     result.parts.push({
         type: "tool",
         tool: "bash",
@@ -288,7 +288,7 @@ test("rejects a tool activity when one mapped member is missing", async () => {
     assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
-test("keeping every candidate is a valid no-op and resets the growth baseline", async () => {
+test("keeping every candidate is rejected while the request remains pending", async () => {
     const sessionID = `selection-keep-all-${Date.now()}`
     const messages = [
         message(sessionID, "user-1", "user", "request", 1),
@@ -298,21 +298,22 @@ test("keeping every candidate is a valid no-op and resets the growth baseline", 
     const { state, compress } = setup(messages)
     state.nudges.pendingCompression = { candidates: ["A2"], cacheBoundary: "A2" }
 
-    const result = await compress.execute(
-        { keep: ["A2"], confirmedFacts: [], nextSteps: [] },
-        toolContext(sessionID, "compress-1", "call-1"),
+    await assert.rejects(
+        compress.execute(
+            { keep: ["A2"], confirmedFacts: [], nextSteps: [] },
+            toolContext(sessionID, "compress-1", "call-1"),
+        ),
+        /Compression is required.*omit at least one eligible block/,
     )
-    assert.match(result, /Kept every candidate block/)
     assert.equal(state.prune.messages.blocksById.size, 0)
-    assert.equal(state.nudges.pendingCompression, undefined)
-    assert.equal(typeof state.nudges.lastPerMessageNudgeTokens, "number")
+    assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2"])
 })
 
 test("keep-all restores pending state when persistence fails", async () => {
     const sessionID = `selection-keep-all-save-failure-${Date.now()}`
     const messages = [
         message(sessionID, "user-1", "user", "request", 1),
-        message(sessionID, "assistant-1", "assistant", "result", 2),
+        message(sessionID, "assistant-1", "assistant", "result ".repeat(100), 2),
         message(sessionID, "user-2", "user", "continue", 3),
     ]
     const { state, compress } = setup(messages)
@@ -342,7 +343,7 @@ test("notification failure after persistence does not roll back the committed ch
     const sessionID = `selection-notification-failure-${Date.now()}`
     const messages = [
         message(sessionID, "user-1", "user", "request", 1),
-        message(sessionID, "assistant-1", "assistant", "result", 2),
+        message(sessionID, "assistant-1", "assistant", "result ".repeat(100), 2),
         message(sessionID, "user-2", "user", "continue", 3),
     ]
     const pluginConfig = config()
@@ -392,8 +393,8 @@ test("compressing an active B checkpoint creates C", async () => {
     const sessionID = `selection-generation-${Date.now()}`
     const messages = [
         message(sessionID, "user-1", "user", "request", 1),
-        message(sessionID, "assistant-1", "assistant", "old result", 2),
-        message(sessionID, "assistant-2", "assistant", "new result", 3),
+        message(sessionID, "assistant-1", "assistant", "old result ".repeat(100), 2),
+        message(sessionID, "assistant-2", "assistant", "new result ".repeat(100), 3),
         message(sessionID, "user-2", "user", "continue", 4),
     ]
     const { state, compress } = setup(messages)
@@ -450,7 +451,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     const firstTurn = structuredClone(messages)
     injectCompressNudges(state, pluginConfig, new Logger(false), firstTurn, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, false)
-    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
+    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_001)
 
     messages.push(
         message(
@@ -467,7 +468,7 @@ test("growth cycle requests compression again after a checkpoint resets the base
     injectCompressNudges(state, pluginConfig, new Logger(false), growthTurn, runtimePrompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
     assert.deepEqual(state.nudges.pendingCompression?.candidates, ["A2", "A4"])
-    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
+    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_001)
 
     await compress.execute(
         {

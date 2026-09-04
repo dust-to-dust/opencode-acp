@@ -115,8 +115,6 @@ export interface Nudges {
     lastTier3NudgeTokens: number | undefined
     /** Set by injectCompressNudges for diagnostics. Undefined = first turn. */
     shouldInjectThisTurn: boolean | undefined
-    /** Transient system guidance staged by the message transform for the same request. */
-    pendingSystemNudge: string | undefined
     /**
      * Lock flag: prevents baseline leak after compress.
      *

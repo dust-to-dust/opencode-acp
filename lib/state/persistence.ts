@@ -1,4 +1,4 @@
-/** 会话状态仅加载当前结构版本；不兼容状态必须上抛且禁止写回。 */
+/** 会话状态按 session 串行原子写入；不兼容状态必须上抛且禁止写回。 */
 
 import * as fs from "fs/promises"
 import { existsSync } from "fs"
@@ -15,6 +15,8 @@ import type { Logger } from "../logger"
 import { serializePruneMessagesState } from "./utils"
 
 export const SESSION_STATE_SCHEMA_VERSION = 3
+const saveQueues = new Map<string, Promise<void>>()
+const saveRevisions = new Map<string, number>()
 
 export class IncompatibleSessionStateError extends Error {
     constructor(
@@ -103,6 +105,7 @@ async function writePersistedSessionState(
     sessionId: string,
     state: PersistedSessionState,
     logger: Logger,
+    revision: number,
 ): Promise<void> {
     // Capture file path synchronously before any await — prevents race condition
     // when fire-and-forget saves execute after XDG_DATA_HOME has changed (tests).
@@ -113,7 +116,9 @@ async function writePersistedSessionState(
     }
 
     const content = JSON.stringify(state, null, 2)
-    await fs.writeFile(filePath, content, "utf-8")
+    const tempPath = `${filePath}.${revision}.tmp`
+    await fs.writeFile(tempPath, content, "utf-8")
+    await fs.rename(tempPath, filePath)
 
     logger.info("Saved session state to disk", {
         sessionId,
@@ -160,7 +165,19 @@ export async function saveSessionState(
         modelID: sessionState.modelID,
     }
 
-    await writePersistedSessionState(sessionState.sessionId, state, logger)
+    const sessionId = sessionState.sessionId
+    const revision = (saveRevisions.get(sessionId) ?? 0) + 1
+    saveRevisions.set(sessionId, revision)
+    const previous = saveQueues.get(sessionId) ?? Promise.resolve()
+    const queued = previous.then(() =>
+        writePersistedSessionState(sessionId, state, logger, revision),
+    )
+    saveQueues.set(sessionId, queued)
+    try {
+        await queued
+    } finally {
+        if (saveQueues.get(sessionId) === queued) saveQueues.delete(sessionId)
+    }
 }
 
 export async function loadSessionState(

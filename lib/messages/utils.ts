@@ -1,3 +1,4 @@
+/** 合成消息使用稳定标识；动态 nudge 只驻留 transform 的内存数组。 */
 import { createHash } from "node:crypto"
 import type { SessionState, WithParts } from "../state"
 import { isMessageCompacted } from "../state/utils"
@@ -8,8 +9,10 @@ const SUMMARY_ID_HASH_LENGTH = 16
 const DCP_BLOCK_ID_TAG_REGEX =
     /(<(?:dcp|acp)-message-id[^>]*>)(?:[B-Z]|[A-Z]{2,})\d+(<\/(?:dcp|acp)-message-id>)/gi
 const DCP_MESSAGE_REF_TAG_REGEX = /<(?:dcp|acp)-message-id[^>]*>A\d+<\/(?:dcp|acp)-message-id>/gi
-const DCP_PAIRED_TAG_REGEX = /<(?:dcp|acp)[^>]*>[\s\S]*?<\/(?:dcp|acp)[^>]*>/gi
-const DCP_UNPAIRED_TAG_REGEX = /<\/?(?:dcp|acp)[^>]*>/gi
+const DCP_PAIRED_TAG_REGEX =
+    /<((?:dcp|acp)(?!-policy)(?:[-:_][^>\s]+)?)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi
+const DCP_UNPAIRED_TAG_REGEX = /<\/?(?:dcp|acp)(?!-policy)(?:[-:_][^>\s]+)?(?:\s[^>]*)?>/gi
+const EPHEMERAL_COMPRESSION_NUDGE = "__acpEphemeralCompressionNudge"
 
 const generateStableId = (prefix: string, seed: string): string => {
     const hash = createHash("sha256").update(seed).digest("hex").slice(0, SUMMARY_ID_HASH_LENGTH)
@@ -77,6 +80,39 @@ export const createSyntheticUserMessage = (
     content: string,
     stableSeed?: string,
 ): WithParts => createSyntheticMessage(baseMessage, content, stableSeed, "user")
+
+export const appendEphemeralCompressionNudge = (
+    messages: WithParts[],
+    nudgeText: string,
+): WithParts | undefined => {
+    const content = nudgeText.trim()
+    if (!content) return undefined
+
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if ((messages[index] as any)[EPHEMERAL_COMPRESSION_NUDGE] === true) {
+            messages.splice(index, 1)
+        }
+    }
+
+    const baseMessage = [...messages].reverse().find((message) => message.info.role === "user")
+    if (!baseMessage) return undefined
+
+    const sessionId = baseMessage.info.sessionID
+    const message = createSyntheticUserMessage(
+        baseMessage,
+        content,
+        `acp-dynamic-compression-nudge:${sessionId}`,
+    ) as WithParts & Record<string, unknown>
+    const created = baseMessage.info.time.created
+    message.info.time = { ...message.info.time, created }
+    message[EPHEMERAL_COMPRESSION_NUDGE] = true
+    ;(message.info as any)[EPHEMERAL_COMPRESSION_NUDGE] = true
+    for (const part of message.parts) {
+        ;(part as any)[EPHEMERAL_COMPRESSION_NUDGE] = true
+    }
+    messages.push(message)
+    return message
+}
 
 export const createSyntheticTextPart = (
     baseMessage: WithParts,
@@ -201,7 +237,13 @@ export const stripStaleMessageRefs = (text: string): string => {
 }
 
 export const stripHallucinationsFromString = (text: string): string => {
-    return text.replace(DCP_PAIRED_TAG_REGEX, "").replace(DCP_UNPAIRED_TAG_REGEX, "")
+    let stripped = text
+    let previous: string
+    do {
+        previous = stripped
+        stripped = stripped.replace(DCP_PAIRED_TAG_REGEX, "")
+    } while (stripped !== previous)
+    return stripped.replace(DCP_UNPAIRED_TAG_REGEX, "")
 }
 
 export const stripHallucinations = (messages: WithParts[]): void => {

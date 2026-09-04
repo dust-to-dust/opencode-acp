@@ -1,6 +1,6 @@
 import type { SessionState, WithParts } from "./state"
 import type { Logger } from "./logger"
-/** 已禁用会话不得执行 ACP 的提示词、消息、命令或文本变换。 */
+/** 已禁用会话不得执行 ACP；动态压缩请求只能作为内存消息尾缀。 */
 import type { PluginConfig } from "./config"
 import { assignMessageRefs } from "./message-ids"
 import {
@@ -27,7 +27,6 @@ import { filterMessages, filterMessagesInPlace } from "./messages/shape"
 import { getLastUserMessage } from "./messages/query"
 import { handleContextCommand, handleStatsCommand } from "./commands"
 import { handleExportCommand } from "./commands/export"
-import { sendIgnoredMessage } from "./ui/notification"
 import { type HostPermissionSnapshot } from "./host-permissions"
 import { compressPermission, syncCompressPermissionState } from "./compress-permission"
 import { hideConsumedCompressCalls } from "./compress/hide-consumed"
@@ -43,6 +42,8 @@ import {
 } from "./state"
 import { cacheSystemPromptTokens } from "./ui/utils"
 import { getCurrentTokenUsage } from "./token-utils"
+import { appendEphemeralCompressionNudge } from "./messages/utils"
+import { sendIgnoredMessage } from "./ui/notification"
 
 const INTERNAL_AGENT_SIGNATURES = [
     "You are a title generator",
@@ -133,15 +134,10 @@ export function createSystemPromptHandler(
             ),
             state.isSubAgent && config.allowSubAgents,
         )
-        const pendingSystemNudge = state.nudges.pendingSystemNudge
-        state.nudges.pendingSystemNudge = undefined
-        const systemAddition = pendingSystemNudge
-            ? `${newPrompt}\n\n${pendingSystemNudge}`
-            : newPrompt
         if (output.system.length > 0) {
-            output.system[output.system.length - 1] += "\n\n" + systemAddition
+            output.system[output.system.length - 1] += "\n\n" + newPrompt
         } else {
-            output.system.push(systemAddition)
+            output.system.push(newPrompt)
         }
     }
 }
@@ -259,7 +255,11 @@ export function createChatMessageTransformHandler(
         syncCompressionBlocks(state, logger, output.messages)
         if (state.prune.messages.activeBlockIds.size !== activeBlockCountBefore) {
             // [FIX Bug 4]
-            saveSessionState(state, logger).catch(() => {}) // [FIX Bug 4] persist deactivations
+            saveSessionState(state, logger).catch((error) =>
+                logger.warn("Failed to persist compression block deactivations", {
+                    error: error instanceof Error ? error.message : String(error),
+                }),
+            ) // [FIX Bug 4] persist deactivations
         }
         syncToolCache(state, config, logger, output.messages)
         buildToolIdList(state, output.messages)
@@ -269,7 +269,7 @@ export function createChatMessageTransformHandler(
         assignMessageRefs(state, output.messages)
         const compressionPriorities = buildPriorityMap(config, state, output.messages)
         prompts.reload()
-        injectCompressNudges(
+        const nudgeText = injectCompressNudges(
             state,
             config,
             logger,
@@ -278,11 +278,7 @@ export function createChatMessageTransformHandler(
             compressionPriorities,
             config.debug
                 ? (text: string) => {
-                      // sendIgnoredMessage writes an ignored:true user msg to DB.
-                      // opencode's runtime loop detects it as "last user" (role-only,
-                      // ignores the flag) → phantom turn → compress → notification →
-                      // infinite loop. Use logger.debug + toast instead.
-                      logger.debug(`[ACP Debug] Nudge injected:${text}`)
+                      logger.debug(`[ACP Debug] Ephemeral nudge suffix appended:${text}`)
                       client.tui
                           .showToast({
                               body: {
@@ -292,7 +288,11 @@ export function createChatMessageTransformHandler(
                                   duration: 5000,
                               },
                           })
-                          .catch(() => {})
+                          .catch((error: unknown) =>
+                              logger.warn("Failed to show compression nudge toast", {
+                                  error: error instanceof Error ? error.message : String(error),
+                              }),
+                          )
                   }
                 : undefined,
             prePruneTokens,
@@ -302,6 +302,9 @@ export function createChatMessageTransformHandler(
         stripStaleMetadata(output.messages)
         dropEmptyMessages(output.messages)
         const postTokens = getCurrentTokenUsage(state, output.messages)
+        const appendedNudge = nudgeText
+            ? appendEphemeralCompressionNudge(output.messages, nudgeText)
+            : undefined
         logger.info("Chat transform complete", {
             session: state.sessionId,
             model: state.modelID,
@@ -314,6 +317,7 @@ export function createChatMessageTransformHandler(
                     ? `${((postTokens / state.modelContextLimit) * 100).toFixed(1)}%`
                     : undefined,
             nudged: state.nudges.shouldInjectThisTurn,
+            nudgeAppended: Boolean(appendedNudge),
         })
 
         if (state.sessionId) {

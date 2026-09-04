@@ -1,3 +1,4 @@
+/** 查询逻辑必须排除 ACP 临时消息，避免其成为真实用户轮次或候选。 */
 import type { PluginConfig } from "../config"
 import type { WithParts } from "../state"
 import { isMessageWithInfo } from "./shape"
@@ -5,10 +6,12 @@ import { isMessageWithInfo } from "./shape"
 export function isSyntheticMessage(message: WithParts): boolean {
     const id = message?.info?.id
     return (
-        typeof id === "string" &&
-        (id.startsWith("msg_dcp_summary_") ||
-            id.startsWith("msg_dcp_text_") ||
-            id.startsWith("msg_acp_recap_"))
+        (message as any)?.__acpEphemeralCompressionNudge === true ||
+        (message?.info as any)?.__acpEphemeralCompressionNudge === true ||
+        (typeof id === "string" &&
+            (id.startsWith("msg_dcp_summary_") ||
+                id.startsWith("msg_dcp_text_") ||
+                id.startsWith("msg_acp_recap_")))
     )
 }
 

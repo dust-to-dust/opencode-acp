@@ -242,7 +242,7 @@ test("scheduler establishes a baseline before it requests compression", () => {
     assert.equal(current.length, messages.length)
 })
 
-test("multi-turn growth injects a frozen selection request into the same request's system prompt", async () => {
+test("multi-turn growth returns a frozen selection request without changing history", async () => {
     const config = buildConfig()
     config.compress.preserveRecentMessages = 0
     const raw = [
@@ -253,17 +253,18 @@ test("multi-turn growth injects a frozen selection request into the same request
     const state = initializeState(raw)
 
     const firstTurn = transformed(raw)
-    injectCompressNudges(state, config, logger, firstTurn, prompts)
+    const firstNudge = injectCompressNudges(state, config, logger, firstTurn, prompts)
     assert.equal(state.nudges.shouldInjectThisTurn, false)
-    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
+    assert.equal(firstNudge, undefined)
+    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_001)
     assert.equal(state.nudges.pendingCompression, undefined)
 
     raw.push(assistantMessage("assistant-2", "recent result", 4, 103_000))
     assignMessageRefs(state, raw)
     const secondTurn = transformed(raw)
-    injectCompressNudges(state, config, logger, secondTurn, prompts)
+    const request = injectCompressNudges(state, config, logger, secondTurn, prompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
-    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
+    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_001)
     assert.deepEqual(state.nudges.pendingCompression, {
         candidates: ["A2", "A4"],
         cacheBoundary: "A4",
@@ -273,7 +274,7 @@ test("multi-turn growth injects a frozen selection request into the same request
     assert.equal(secondTurn.length, raw.length, "request must not add a synthetic message")
     const requestTarget = secondTurn.find((message) => message.info.id === "user-2")!
     assert.equal(messageText(requestTarget), "continue", "user content must remain unchanged")
-    const request = state.nudges.pendingSystemNudge ?? ""
+    assert.ok(request)
     assert.match(request, /\[ACP compression required\]/)
     assert.match(request, /Eligible blocks \(oldest first\):\nA2, A4/)
     assert.match(request, /Cache boundary: A4/)
@@ -281,15 +282,10 @@ test("multi-turn growth injects a frozen selection request into the same request
     assert.doesNotMatch(request, /Context limit marker/)
     assert.doesNotMatch(request, /Confirmed facts|compression philosophy|HOW TO COMPRESS/i)
 
-    const systemHandler = createSystemPromptHandler(
-        createTestRegistry(state),
-        logger,
-        config,
-        {
-            reload() {},
-            getRuntimePrompts: () => prompts,
-        },
-    )
+    const systemHandler = createSystemPromptHandler(createTestRegistry(state), logger, config, {
+        reload() {},
+        getRuntimePrompts: () => prompts,
+    })
     const systemOutput = { system: ["Base system"] }
     await systemHandler(
         {
@@ -299,24 +295,21 @@ test("multi-turn growth injects a frozen selection request into the same request
         systemOutput,
     )
     assert.match(systemOutput.system[0], /Base system/)
-    assert.match(systemOutput.system[0], /\[ACP compression required\]/)
-    assert.match(systemOutput.system[0], /Eligible blocks \(oldest first\):\nA2, A4/)
-    assert.equal(state.nudges.pendingSystemNudge, undefined, "system hook consumes the nudge")
+    assert.doesNotMatch(
+        systemOutput.system[0],
+        /ACP compression required|Eligible blocks|Cache boundary/,
+    )
 
     const pendingTurn = transformed(raw)
     const latestAssistant = pendingTurn.find((message) => message.info.id === "assistant-2")!
     if (latestAssistant.info.role === "assistant") latestAssistant.info.tokens.input = 106_000
-    injectCompressNudges(state, config, logger, pendingTurn, prompts)
+    const pendingRequest = injectCompressNudges(state, config, logger, pendingTurn, prompts)
     assert.equal(state.nudges.shouldInjectThisTurn, true)
-    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_000)
-    assert.equal(
-        pendingTurn.length,
-        raw.length,
-        "pending request must not add a synthetic message",
-    )
+    assert.equal(state.nudges.lastPerMessageNudgeTokens, 100_001)
+    assert.equal(pendingTurn.length, raw.length, "pending request must not add a synthetic message")
     const pendingTarget = pendingTurn.find((message) => message.info.id === "user-2")!
     assert.equal(messageText(pendingTarget), "continue")
-    assert.equal(state.nudges.pendingSystemNudge, request)
+    assert.equal(pendingRequest, request)
 })
 
 test("max-context requests stage limit guidance for the current system prompt", () => {
@@ -332,11 +325,11 @@ test("max-context requests stage limit guidance for the current system prompt", 
     state.nudges.lastPerMessageNudgeTokens = 100_000
 
     const current = transformed(raw)
-    injectCompressNudges(state, config, logger, current, prompts)
+    const request = injectCompressNudges(state, config, logger, current, prompts)
 
     assert.equal(current.length, raw.length)
     assert.equal(messageText(current.find((message) => message.info.id === "user-2")!), "continue")
-    const request = state.nudges.pendingSystemNudge ?? ""
+    assert.ok(request)
     assert.match(request, /Context limit marker: compress before overflow/)
     assert.match(request, /Eligible blocks \(oldest first\):\nA2/)
     assert.match(request, /Cache boundary: A2/)

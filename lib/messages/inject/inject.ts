@@ -1,3 +1,4 @@
+/** 动态压缩请求只返回本轮文本，消息尾缀由 transform 最后追加。 */
 import type { SessionState, WithParts } from "../../state"
 import type { Logger } from "../../logger"
 import type { PluginConfig } from "../../config"
@@ -10,7 +11,7 @@ import {
 } from "../../message-ids"
 import type { CompressionPriorityMap } from "../priority"
 import { compressPermission } from "../../compress-permission"
-import { countMessageCharacters } from "../../token-utils"
+import { countAllMessageTokens, countMessageCharacters, countTokens } from "../../token-utils"
 import {
     isIgnoredUserMessage,
     isProtectedUserMessage,
@@ -35,6 +36,9 @@ import {
 } from "./utils"
 import { messageContainsProtectedTool } from "../../compress/protected-content"
 
+const MAX_NUDGE_CANDIDATES = 300
+const MAX_NUDGE_CHARACTERS = 12_000
+
 export const injectCompressNudges = (
     state: SessionState,
     config: PluginConfig,
@@ -44,10 +48,10 @@ export const injectCompressNudges = (
     _compressionPriorities?: CompressionPriorityMap,
     debugNotify?: (text: string) => void,
     _preCompressTokens?: number,
-): void => {
-    state.nudges.pendingSystemNudge = undefined
+): string | undefined => {
     if (compressPermission(state, config) === "deny") {
-        return
+        state.nudges.shouldInjectThisTurn = false
+        return undefined
     }
 
     const { providerId, modelId } = getModelInfo(messages)
@@ -66,6 +70,7 @@ export const injectCompressNudges = (
         currentTokens !== undefined &&
         currentTokens >= emergencyThreshold
     let stateChanged = false
+    let nudgeText: string | undefined
     const protectedRefs = computeProtectedRefs(messages, state, config.compress)
     const candidateResult = buildCompressionCandidates(state, config, messages, protectedRefs)
 
@@ -78,105 +83,115 @@ export const injectCompressNudges = (
             pending.candidates.every((ref) => available.has(ref))
 
         if (pendingIsCurrent) {
-            state.nudges.pendingSystemNudge = renderCompressionRequest(
+            const bounded = boundCompressionRequest(
                 prompts,
                 pending.candidates,
                 pending.cacheBoundary,
                 overMaxLimit || emergencyOverride,
             )
-            debugNotify?.(state.nudges.pendingSystemNudge)
+            pending.candidates = bounded.candidates
+            pending.cacheBoundary = bounded.cacheBoundary
+            nudgeText = bounded.text
             state.nudges.shouldInjectThisTurn = true
-            return
+        } else {
+            state.nudges.pendingCompression = undefined
+            state.nudges.shouldInjectThisTurn = false
+            stateChanged = true
+        }
+    }
+    if (nudgeText === undefined) {
+        if (
+            currentTokens !== undefined &&
+            state.nudges.lastPerMessageNudgeTokens !== undefined &&
+            currentTokens < state.nudges.lastPerMessageNudgeTokens - nudgeGrowthTokens
+        ) {
+            state.nudges.lastPerMessageNudgeTokens = currentTokens
+            state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
+            state.nudges.lastNudgeShownTokens = undefined
+            stateChanged = true
         }
 
-        state.nudges.pendingCompression = undefined
-        state.nudges.shouldInjectThisTurn = false
-        stateChanged = true
-    }
+        if (state.nudges.lastPerMessageNudgeTokens === undefined && currentTokens !== undefined) {
+            state.nudges.lastPerMessageNudgeTokens = currentTokens
+            state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
+            state.nudges.shouldInjectThisTurn = false
+            stateChanged = true
+        } else {
+            if (state.nudges.lastCompressibleNudgeTokens === undefined) {
+                state.nudges.lastCompressibleNudgeTokens = 0
+                stateChanged = true
+            }
 
-    if (
-        currentTokens !== undefined &&
-        state.nudges.lastPerMessageNudgeTokens !== undefined &&
-        currentTokens < state.nudges.lastPerMessageNudgeTokens - nudgeGrowthTokens
-    ) {
-        state.nudges.lastPerMessageNudgeTokens = currentTokens
-        state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
-        state.nudges.lastNudgeShownTokens = undefined
-        stateChanged = true
-    }
+            if (candidateResult.tokens < state.nudges.lastCompressibleNudgeTokens) {
+                state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
+                stateChanged = true
+            }
 
-    if (state.nudges.lastPerMessageNudgeTokens === undefined && currentTokens !== undefined) {
-        state.nudges.lastPerMessageNudgeTokens = currentTokens
-        state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
-        state.nudges.shouldInjectThisTurn = false
-        saveSessionState(state, logger).catch(() => {})
-        return
-    }
+            const compressibleGrowth =
+                candidateResult.tokens - state.nudges.lastCompressibleNudgeTokens
+            const growthThresholdMet =
+                compressibleGrowth > 0 && compressibleGrowth >= nudgeGrowthTokens
+            const minNudgeFloorTokens = resolveMinNudgeFloorTokens(
+                config,
+                modelContextLimit,
+                providerId,
+                modelId,
+            )
+            const overMinNudgeFloor =
+                minNudgeFloorTokens === undefined ||
+                currentTokens === undefined ||
+                currentTokens >= minNudgeFloorTokens
+            const nudgeAllowed =
+                emergencyOverride ||
+                (growthThresholdMet &&
+                    (overMaxLimit || overMinNudgeFloor) &&
+                    candidateResult.tokens > 0)
+            const meetsMinimum =
+                config.compress.minCompressRange <= 0 ||
+                candidateResult.characters >= config.compress.minCompressRange
 
-    if (state.nudges.lastCompressibleNudgeTokens === undefined) {
-        // Older persisted sessions have no eligible-content baseline. Treat
-        // their currently visible candidates as newly observed content.
-        state.nudges.lastCompressibleNudgeTokens = 0
-        stateChanged = true
-    }
-
-    if (candidateResult.tokens < state.nudges.lastCompressibleNudgeTokens) {
-        state.nudges.lastCompressibleNudgeTokens = candidateResult.tokens
-        stateChanged = true
-    }
-
-    const compressibleGrowth = candidateResult.tokens - state.nudges.lastCompressibleNudgeTokens
-    const growthThresholdMet = compressibleGrowth > 0 && compressibleGrowth >= nudgeGrowthTokens
-    const minNudgeFloorTokens = resolveMinNudgeFloorTokens(
-        config,
-        modelContextLimit,
-        providerId,
-        modelId,
-    )
-    const overMinNudgeFloor =
-        minNudgeFloorTokens === undefined ||
-        currentTokens === undefined ||
-        currentTokens >= minNudgeFloorTokens
-    const nudgeAllowed =
-        emergencyOverride ||
-        (growthThresholdMet && (overMaxLimit || overMinNudgeFloor) && candidateResult.tokens > 0)
-
-    const meetsMinimum =
-        config.compress.minCompressRange <= 0 ||
-        candidateResult.characters >= config.compress.minCompressRange
-
-    if (nudgeAllowed && candidateResult.refs.length > 0 && meetsMinimum) {
-        const pending = {
-            candidates: candidateResult.refs,
-            cacheBoundary: candidateResult.refs[candidateResult.refs.length - 1],
-            createdAtTokens: currentTokens,
+            if (nudgeAllowed && candidateResult.refs.length > 0 && meetsMinimum) {
+                const candidates = candidateResult.refs.slice(0, MAX_NUDGE_CANDIDATES)
+                const pending = {
+                    candidates,
+                    cacheBoundary: candidates[candidates.length - 1],
+                    createdAtTokens: currentTokens,
+                }
+                state.nudges.pendingCompression = pending
+                state.nudges.lastNudgeShownTokens = currentTokens
+                state.nudges.shouldInjectThisTurn = true
+                stateChanged = true
+                const bounded = boundCompressionRequest(
+                    prompts,
+                    pending.candidates,
+                    pending.cacheBoundary,
+                    overMaxLimit || emergencyOverride,
+                )
+                pending.candidates = bounded.candidates
+                pending.cacheBoundary = bounded.cacheBoundary
+                nudgeText = bounded.text
+                logger.info("Compression selection requested", {
+                    session: state.sessionId,
+                    trigger: emergencyOverride ? "emergency" : "growth",
+                    candidates: pending.candidates.length,
+                    cacheBoundary: pending.cacheBoundary,
+                    currentTokens,
+                })
+            } else {
+                state.nudges.shouldInjectThisTurn = false
+            }
         }
-        state.nudges.pendingCompression = pending
-        state.nudges.lastNudgeShownTokens = currentTokens
-        state.nudges.shouldInjectThisTurn = true
-        stateChanged = true
+    }
 
-        state.nudges.pendingSystemNudge = renderCompressionRequest(
-            prompts,
-            pending.candidates,
-            pending.cacheBoundary,
-            overMaxLimit || emergencyOverride,
+    if (nudgeText) debugNotify?.(nudgeText)
+    if (stateChanged || nudgeText !== undefined) {
+        saveSessionState(state, logger).catch((error) =>
+            logger.warn("Failed to persist nudge state", {
+                error: error instanceof Error ? error.message : String(error),
+            }),
         )
-        debugNotify?.(state.nudges.pendingSystemNudge)
-        logger.info("Compression selection requested", {
-            session: state.sessionId,
-            trigger: emergencyOverride ? "emergency" : "growth",
-            candidates: pending.candidates.length,
-            cacheBoundary: pending.cacheBoundary,
-            currentTokens,
-        })
-    } else {
-        state.nudges.shouldInjectThisTurn = false
     }
-
-    if (stateChanged || nudgeAllowed) {
-        saveSessionState(state, logger).catch(() => {})
-    }
+    return nudgeText
 }
 
 export function buildCompressionCandidates(
@@ -197,6 +212,7 @@ export function buildCompressionCandidates(
             ref: string
             time: number
             characters: number
+            tokens: number
             visible: boolean
             blocked: boolean
         }
@@ -210,11 +226,13 @@ export function buildCompressionCandidates(
             ref,
             time: message.info.time.created,
             characters: 0,
+            tokens: 0,
             visible: false,
             blocked: false,
         }
         entry.time = Math.min(entry.time, message.info.time.created)
         entry.characters += countMessageCharacters(message)
+        entry.tokens += countAllMessageTokens(message)
         const isCompressed =
             (state.prune.messages.byMessageId.get(message.info.id)?.activeBlockIds.length ?? 0) > 0
         const isBlocked =
@@ -263,6 +281,7 @@ export function buildCompressionCandidates(
             ref,
             time: block.createdAt,
             characters: block.summary.length,
+            tokens: countTokens(block.summary),
             visible: true,
             blocked: false,
         })
@@ -272,7 +291,7 @@ export function buildCompressionCandidates(
     return {
         refs: entries.map((entry) => entry.ref),
         characters: entries.reduce((total, entry) => total + entry.characters, 0),
-        tokens: Math.round(entries.reduce((total, entry) => total + entry.characters, 0) / 4),
+        tokens: entries.reduce((total, entry) => total + entry.tokens, 0),
     }
 }
 
@@ -298,6 +317,32 @@ function renderCompressionRequest(
         .replace("{{candidates}}", lines.join("\n"))
         .replace("{{cacheBoundary}}", cacheBoundary)
     return contextLimitReached ? `${prompts.contextLimitNudge}\n\n${request}` : request
+}
+
+function boundCompressionRequest(
+    prompts: RuntimePrompts,
+    candidates: string[],
+    cacheBoundary: string,
+    contextLimitReached: boolean,
+): { candidates: string[]; cacheBoundary: string; text: string } {
+    let boundedCandidates = candidates.slice(0, MAX_NUDGE_CANDIDATES)
+    let text = renderCompressionRequest(
+        prompts,
+        boundedCandidates,
+        cacheBoundary,
+        contextLimitReached,
+    )
+    while (boundedCandidates.length > 1 && text.length > MAX_NUDGE_CHARACTERS) {
+        boundedCandidates = boundedCandidates.slice(0, -1)
+        cacheBoundary = boundedCandidates[boundedCandidates.length - 1]
+        text = renderCompressionRequest(
+            prompts,
+            boundedCandidates,
+            cacheBoundary,
+            contextLimitReached,
+        )
+    }
+    return { candidates: boundedCandidates, cacheBoundary, text }
 }
 
 function resolveEmergencyThreshold(

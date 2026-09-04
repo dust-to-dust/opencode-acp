@@ -376,7 +376,6 @@ export function resetOnCompaction(state: SessionState): void {
         lastTier2NudgeTokens: undefined,
         lastTier3NudgeTokens: undefined,
         shouldInjectThisTurn: undefined,
-        pendingSystemNudge: undefined,
         compressBaselineSet: false,
         lastProcessedCompressMessageId: undefined,
         pendingCompression: undefined,

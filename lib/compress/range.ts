@@ -1,3 +1,4 @@
+/** 压缩执行前完成候选、摘要与实际收益校验，失败不改变 pending 状态。 */
 import { tool } from "@opencode-ai/plugin"
 import { countAllMessageTokens, countTokens, getCurrentTokenUsage } from "../token-utils"
 import { formatBlockRef, parseBlockRef, parseMessageRef } from "../message-ids"
@@ -24,24 +25,28 @@ import {
     resolveToolContext,
 } from "./types"
 import { buildCompressionCandidates } from "../messages/inject/inject"
-import { applyCompressOverrides, computeProtectedRefs, getModelInfo } from "../messages/inject/utils"
+import {
+    applyCompressOverrides,
+    computeProtectedRefs,
+    getModelInfo,
+} from "../messages/inject/utils"
 
 function buildSchema() {
     return {
         keep: tool.schema
             .array(tool.schema.string())
             .describe(
-                "Candidate block IDs to keep verbatim. Any listed candidate omitted here is compressed.",
+                "Required. Exact eligible block IDs to retain verbatim. Every eligible block omitted from keep is compressed. Use [] to compress all eligible blocks.",
             ),
         confirmedFacts: tool.schema
             .array(tool.schema.string())
             .describe(
-                "Durable facts, decisions, constraints, and results from the blocks being compressed.",
+                "Required. Durable facts, decisions, constraints, and results extracted from eligible blocks omitted from keep. Use [] only when no such facts must survive.",
             ),
         nextSteps: tool.schema
             .array(tool.schema.string())
             .describe(
-                "Concrete unfinished work that must survive compression. Use [] when none remains.",
+                "Required. Concrete unfinished work extracted from eligible blocks omitted from keep. Use [] when none remains.",
             ),
     }
 }
@@ -240,25 +245,9 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
             const plan = buildSelection(input, candidates, rawMessages, ctx.state)
 
             if (plan.droppedRefs.length === 0) {
-                const snapshot = snapshotCompressionState(ctx.state)
-                try {
-                    ctx.state.nudges.pendingCompression = undefined
-                    ctx.state.nudges.lastNudgeShownTokens = undefined
-                    ctx.state.nudges.lastCompressibleNudgeTokens = getCompressibleTokens(
-                        ctx,
-                        rawMessages,
-                    )
-                    ctx.state.nudges.lastPerMessageNudgeTokens = getCurrentTokenUsage(
-                        ctx.state,
-                        rawMessages,
-                    )
-                    ctx.state.nudges.shouldInjectThisTurn = false
-                    await saveSessionState(ctx.state, ctx.logger)
-                } catch (error) {
-                    restoreCompressionState(ctx.state, snapshot)
-                    throw error
-                }
-                return "Kept every candidate block. No checkpoint was created; continue the task."
+                throw new Error(
+                    "Compression is required. keep must omit at least one eligible block.",
+                )
             }
 
             const facts = input.confirmedFacts.map((fact) => fact.trim()).filter(Boolean)
@@ -288,6 +277,25 @@ export function createCompressRangeTool(factoryCtx: ToolFactoryContext): ReturnT
                 )
             const storedSummary = wrapCompressedSummary(blockId, outputTier, summary)
             const summaryTokens = countTokens(storedSummary)
+            const selectedSourceTokens =
+                [...plan.selection.messageTokenById.values()].reduce(
+                    (total, tokens) => total + tokens,
+                    0,
+                ) +
+                plan.consumedBlockIds.reduce(
+                    (total, id) =>
+                        total +
+                        (ctx.state.prune.messages.blocksById.get(id)?.effectiveCompressedTokens ??
+                            ctx.state.prune.messages.blocksById.get(id)?.compressedTokens ??
+                            0),
+                    0,
+                )
+            const fixedOverheadTokens = countTokens("Confirmed facts:\n\nNext steps:")
+            if (selectedSourceTokens - summaryTokens - fixedOverheadTokens <= 0) {
+                throw new Error(
+                    "Compression would not reduce context size; keep more source blocks or provide a shorter summary.",
+                )
+            }
             const notifications: NotificationEntry[] = []
 
             try {
