@@ -6,7 +6,11 @@ import { existsSync } from "fs"
 import { join } from "path"
 import { homedir } from "os"
 import { Logger } from "../lib/logger"
-import { saveSessionState, loadSessionState } from "../lib/state/persistence"
+import {
+    IncompatibleSessionStateError,
+    saveSessionState,
+    loadSessionState,
+} from "../lib/state/persistence"
 import { createSessionState } from "../lib/state"
 
 const logger = new Logger(false)
@@ -100,7 +104,7 @@ test("loadSessionState returns null for missing required fields", async () => {
     await cleanup()
 })
 
-test("loadSessionState rejects state with a missing schema version", async () => {
+test("loadSessionState reports state with a missing schema version as incompatible", async () => {
     await cleanup()
     const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
     await fs.mkdir(STORAGE_DIR, { recursive: true })
@@ -121,13 +125,16 @@ test("loadSessionState rejects state with a missing schema version", async () =>
     }
     await fs.writeFile(filePath, JSON.stringify(stateWithoutSchema), "utf-8")
 
-    const loaded = await loadSessionState(TEST_SESSION, logger)
-
-    assert.equal(loaded, null, "schema-less state must be rejected")
+    await assert.rejects(
+        loadSessionState(TEST_SESSION, logger),
+        (error: unknown) =>
+            error instanceof IncompatibleSessionStateError &&
+            error.actualSchemaVersion === undefined,
+    )
     await cleanup()
 })
 
-test("loadSessionState rejects state with an old schema version", async () => {
+test("loadSessionState reports an old schema version as incompatible", async () => {
     await cleanup()
     const filePath = join(STORAGE_DIR, `${TEST_SESSION}.json`)
     await fs.mkdir(STORAGE_DIR, { recursive: true })
@@ -140,8 +147,10 @@ test("loadSessionState rejects state with an old schema version", async () => {
     }
     await fs.writeFile(filePath, JSON.stringify(oldState), "utf-8")
 
-    const loaded = await loadSessionState(TEST_SESSION, logger)
-
-    assert.equal(loaded, null, "schema version 2 state must be rejected")
+    await assert.rejects(
+        loadSessionState(TEST_SESSION, logger),
+        (error: unknown) =>
+            error instanceof IncompatibleSessionStateError && error.actualSchemaVersion === 2,
+    )
     await cleanup()
 })

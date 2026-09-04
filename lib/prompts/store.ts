@@ -1,6 +1,8 @@
-import { readFileSync } from "fs"
+/** 提示词默认读取插件内置文件；生产环境按文件优先读取全局 ACM 副本。 */
+import { existsSync, readFileSync } from "fs"
 import { homedir } from "os"
-import { join } from "path"
+import { dirname, join } from "path"
+import { fileURLToPath } from "url"
 import type { Logger } from "../logger"
 
 export type PromptKey =
@@ -87,8 +89,22 @@ export function resolveGlobalPromptsDir(): string {
     return join(homedir(), ".config", "opencode", "acm", "prompts")
 }
 
-function readGlobalPrompt(promptsDir: string, definition: PromptDefinition): string {
-    const filePath = join(promptsDir, definition.fileName)
+export function resolveBundledPromptsDir(): string {
+    const moduleDir = dirname(fileURLToPath(import.meta.url))
+    const bundledDir = join(moduleDir, "../config/prompts")
+    return existsSync(bundledDir) ? bundledDir : join(moduleDir, "../../config/prompts")
+}
+
+function readPrompt(
+    definition: PromptDefinition,
+    production: boolean,
+    globalPromptsDir: string,
+    bundledPromptsDir: string,
+): string {
+    const globalPath = join(globalPromptsDir, definition.fileName)
+    const filePath = production && existsSync(globalPath)
+        ? globalPath
+        : join(bundledPromptsDir, definition.fileName)
     let content: string
     try {
         content = readFileSync(filePath, "utf-8")
@@ -129,10 +145,19 @@ function wrapSystemReminder(content: string): string {
     return `<dcp-system-reminder>\n${content}\n</dcp-system-reminder>`
 }
 
-function loadRuntimePrompts(promptsDir: string): RuntimePrompts {
+function loadRuntimePrompts(
+    production: boolean,
+    globalPromptsDir: string,
+    bundledPromptsDir: string,
+): RuntimePrompts {
     const prompts = {} as RuntimePrompts
     for (const definition of PROMPT_DEFINITIONS) {
-        prompts[definition.runtimeField] = readGlobalPrompt(promptsDir, definition)
+        prompts[definition.runtimeField] = readPrompt(
+            definition,
+            production,
+            globalPromptsDir,
+            bundledPromptsDir,
+        )
     }
     return prompts
 }
@@ -140,8 +165,17 @@ function loadRuntimePrompts(promptsDir: string): RuntimePrompts {
 export class PromptStore {
     private runtimePrompts: RuntimePrompts
 
-    constructor(_logger: Logger, private readonly promptsDir = resolveGlobalPromptsDir()) {
-        this.runtimePrompts = loadRuntimePrompts(this.promptsDir)
+    constructor(
+        _logger: Logger,
+        private readonly production: boolean,
+        private readonly globalPromptsDir = resolveGlobalPromptsDir(),
+        private readonly bundledPromptsDir = resolveBundledPromptsDir(),
+    ) {
+        this.runtimePrompts = loadRuntimePrompts(
+            this.production,
+            this.globalPromptsDir,
+            this.bundledPromptsDir,
+        )
     }
 
     getRuntimePrompts(): RuntimePrompts {
@@ -149,6 +183,10 @@ export class PromptStore {
     }
 
     reload(): void {
-        this.runtimePrompts = loadRuntimePrompts(this.promptsDir)
+        this.runtimePrompts = loadRuntimePrompts(
+            this.production,
+            this.globalPromptsDir,
+            this.bundledPromptsDir,
+        )
     }
 }

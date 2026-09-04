@@ -11,10 +11,16 @@ import "./test-env"
 
 import assert from "node:assert/strict"
 import test, { beforeEach, afterEach } from "node:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { SessionStateRegistry, saveSessionState, type WithParts } from "../lib/state"
+import {
+    SessionStateRegistry,
+    createSessionState,
+    saveSessionState,
+    type WithParts,
+} from "../lib/state"
+import { resolveToolContext } from "../lib/compress/types"
 import { Logger } from "../lib/logger"
 
 function makeClient(): any {
@@ -98,4 +104,50 @@ test("soft-cap eviction drops the oldest session; reload restores persisted mode
 
     const reloaded = await registry.getOrCreate(makeClient(), "session-0", MESSAGES, MANUAL_MODE)
     assert.equal(reloaded.modelContextLimit, 200000)
+})
+
+test("incompatible persisted state warns once and disables only that session", async () => {
+    const storageDir = join(tempDir, "opencode", "storage", "plugin", "acp")
+    const stateFile = join(storageDir, "old-session.json")
+    mkdirSync(storageDir, { recursive: true })
+    writeFileSync(stateFile, JSON.stringify({ schemaVersion: 2 }), "utf-8")
+    const toasts: any[] = []
+    const client = {
+        session: { get: async () => ({ data: { parentID: null } }) },
+        tui: {
+            showToast: async (toast: any) => {
+                toasts.push(toast)
+            },
+        },
+    }
+    const registry = new SessionStateRegistry(new Logger(false))
+
+    const disabled = await registry.getOrCreate(client, "old-session", MESSAGES)
+    const compatible = await registry.getOrCreate(client, "new-session", MESSAGES)
+    await registry.getOrCreate(client, "old-session", MESSAGES)
+
+    assert.match(disabled.disabledReason ?? "", /schema 2/)
+    assert.equal(disabled.compressPermission, "deny")
+    assert.equal(compatible.disabledReason, undefined)
+    assert.equal(toasts.length, 1)
+    assert.equal(toasts[0].body.variant, "warning")
+    assert.match(toasts[0].body.message, /Start a new session/)
+    assert.equal(JSON.parse(readFileSync(stateFile, "utf-8")).schemaVersion, 2)
+})
+
+test("ACP tools reject a self-disabled session", () => {
+    const state = createSessionState()
+    state.sessionId = "old-session"
+    state.disabledReason = "incompatible state"
+
+    assert.throws(
+        () =>
+            resolveToolContext(
+                {
+                    registry: { get: () => state } as any,
+                } as any,
+                "old-session",
+            ),
+        /ACP is disabled for this session: incompatible state/,
+    )
 })

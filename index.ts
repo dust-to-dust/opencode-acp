@@ -1,4 +1,4 @@
-/** ACP version, injected at build time by tsup define */
+/** 插件入口优先处理全局禁用；会话级禁用由注册表状态约束所有钩子。 */
 declare const ACP_VERSION: string | undefined
 import type { Plugin } from "@opencode-ai/plugin"
 import { getConfig } from "./lib/config"
@@ -28,7 +28,8 @@ import { configureClientAuth, isSecureMode } from "./lib/auth"
 import { startAutoUpdate } from "./lib/update"
 
 const server: Plugin = (async (ctx) => {
-    const config = getConfig(ctx)
+    const production = typeof ACP_VERSION !== "undefined"
+    const config = getConfig(ctx, production)
 
     if (!config.enabled) {
         return {}
@@ -51,7 +52,7 @@ const server: Plugin = (async (ctx) => {
         secureMode: isSecureMode(),
     })
     const registry = new SessionStateRegistry(logger)
-    const prompts = new PromptStore(logger)
+    const prompts = new PromptStore(logger, production)
     const hostPermissions: HostPermissionSnapshot = {
         global: undefined,
         agents: {},
@@ -117,7 +118,7 @@ const server: Plugin = (async (ctx) => {
             prompts,
             hostPermissions,
         ) as any,
-        "experimental.text.complete": createTextCompleteHandler(),
+        "experimental.text.complete": createTextCompleteHandler(registry),
         "command.execute.before": createCommandExecuteHandler(
             ctx.client,
             registry,

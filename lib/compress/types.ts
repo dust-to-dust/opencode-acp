@@ -1,3 +1,4 @@
+/** 所有 ACP 工具必须通过会话上下文解析统一拒绝已禁用会话。 */
 import type { PluginConfig } from "../config"
 import type { Logger } from "../logger"
 import type { PromptStore } from "../prompts/store"
@@ -30,6 +31,9 @@ export function resolveToolContext(factoryCtx: ToolFactoryContext, sessionID: st
             `ACP: session ${sessionID} has no initialized state. ` +
                 "messages.transform must run before a compress tool call.",
         )
+    }
+    if (state.disabledReason) {
+        throw new Error(`ACP is disabled for this session: ${state.disabledReason}`)
     }
     return {
         client: factoryCtx.client,

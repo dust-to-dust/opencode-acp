@@ -1,3 +1,4 @@
+/** 会话禁用原因仅驻留内存，不得写入持久化状态。 */
 import type { CompressionTimingState } from "../compress/timing"
 import { Message, Part } from "@opencode-ai/sdk/v2"
 
@@ -143,6 +144,8 @@ export interface Nudges {
 export interface SessionState {
     sessionId: string | null
     isSubAgent: boolean
+    /** Transient reason ACP is disabled for this session. Never persisted. */
+    disabledReason: string | undefined
     compressPermission: "ask" | "allow" | "deny" | undefined
     prune: Prune
     nudges: Nudges

@@ -1,46 +1,27 @@
-# Development Specification
+# Hard Rules
+1. 只改本次任务要求内容；发现旁支问题只报告，不修改
+2. 临时测试数据和代码只放 `temp/`
+3. 遇到可能有歧义的问题，暂停任务，询问用户
+4. 修改源码时，阅读并更新文件顶部的文档说明(应只有以精炼中文描述的规则)
 
-> This file is the always-loaded project contract. Follow it for every change.
+# rules
+1. 实现功能前先思考有没有现成的，复用它
+2. 任务完成时报告：问题原因、逻辑变化、隐患或性能风险
 
-## 1. Scope and Source of Truth
+## 配置
+1. 只从配置文件读取，不从环境变量读取
+2. 文件存放到`config/`
+3. 部署时config复制一份到全局目录`.config\opencode\acm`
 
-ACP (Active Context Pruning) is an OpenCode plugin that gives the model a `compress` tool for model-driven, recoverable context management.
+## 块编号
+1. 编号产生后永久不变，命名格式：代际+序号，如:A1,D77
+2. 不兼容旧会话格式
 
-- Language/runtime: strict TypeScript, ESM, Node.js.
-- Build: `tsup` plus `tsc --emitDeclarationOnly`.
-- Tests: Node's built-in runner with `tsx`.
-- Package manager: npm.
-- Formatting: Prettier.
-- Runtime behavior is defined by the current source, schemas, and package assets. Do not copy defaults or behavior from stale documentation.
-- Do not add runtime dependencies without an explicit requirement.
+## 提示词
+1. 必须有明确用户指令才可修改
 
-Task-specific references (read only when relevant):
+## 测试
+1. 只为关键点/易产生歧义点编写测试
+2. 仅在必要时(如发布新版本)才进行完整的测试
 
-- Architecture and data flow: `./docs/architecture.md`
-- Testing and test review: `./docs/testing.md`
-- Local build, deployment, and diagnostics: `./docs/development.md`
-- Stable, prerelease, and fallback publishing: `./docs/release.md`
-- Requirement and worklog format: `./devlog/README.md`
-
-## 2. Non-Negotiable Runtime Invariants
-
-- 发给大模型的上下文中，赋予编号后恒定不可修改
-- Preserve the message-transform pipeline order unless the dependency between every affected step is understood and tested. The broad order is: resolve session state, update turn state, clean stale references, assign activity references, sync checkpoints, run GC, prune, inject semantic compression nudges, inject IDs, then strip stale metadata.
-- Session state is per session and includes compression blocks, nudge state, token statistics, raw-ID/reference mappings, timing, and tool-parameter caches. Persistence and state mutations must not lose existing data.
-- Protected tools, protected file patterns, protected user messages, and other configured protected content must not be accidentally pruned. Protected tool messages must be hard-excluded from semantic candidate sets, not merely mentioned in checkpoint summaries.
-- Preserve tool-use/tool-result pairing and the first-user-message invariant when changing message filtering or semantic candidate selection.
-- Internal DCP-compatible names are persisted or shown to models. Do not rename `dcp-message-id`, `dcp-system-reminder`, `DCP_*` compatibility identifiers, or `dcp.schema.json` without a migration plan. User-visible naming remains ACP/acp.
-    
-## 3. Coding and Verification Rules
-
-- Follow the existing parameter-passing pattern: modules receive configuration, session state, and logger explicitly; do not introduce global mutable singletons.
-- Keep changes minimal and local. Do not use `as any`, `@ts-ignore`, or type-assertion hacks to bypass the type system.
-- Add or update tests for behavior changes. Tests must import the real implementation and make meaningful assertions.
-
-## 4. Git, Devlog, and PR Safety
-
-- Normal branch names match `YYYY-MM-DD_short-title`. Create a matching `devlog/<branch-name>/` entry before implementation.
-- Every PR includes `REQ.md` and `WORKLOG.md`; add `DESIGN.md` for architecture, data-flow, or module-boundary changes. Update the worklog during and after implementation.
-- Do not delete branches or tags without human confirmation.
-- Do not modify `package.json`'s `version` on non-release branches.
-- Use descriptive commit messages. Follow the release guide for release-specific branch and publishing rules.
+## 仅在特定任务时阅读

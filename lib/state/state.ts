@@ -1,3 +1,4 @@
+/** 会话初始化遇到不兼容状态时告警并按会话禁用，不得重建或覆盖旧状态。 */
 import type { SessionState, ToolParameterEntry, WithParts } from "./types"
 import type { PluginConfig } from "../config"
 import type { Logger } from "../logger"
@@ -6,7 +7,12 @@ import {
     type CompressionTimingState,
     type PendingCompressionDuration,
 } from "../compress/timing"
-import { loadSessionState, saveSessionState } from "./persistence"
+import {
+    IncompatibleSessionStateError,
+    SESSION_STATE_SCHEMA_VERSION,
+    loadSessionState,
+    saveSessionState,
+} from "./persistence"
 import { createModelLimitCatalog } from "./model-limits"
 import {
     isSubAgentSession,
@@ -157,6 +163,7 @@ export function createSessionState(): SessionState {
     return {
         sessionId: null,
         isSubAgent: false,
+        disabledReason: undefined,
         compressPermission: undefined,
         prune: {
             messages: createPruneMessagesState(),
@@ -202,6 +209,7 @@ export function createSessionState(): SessionState {
 export function resetSessionState(state: SessionState): void {
     state.sessionId = null
     state.isSubAgent = false
+    state.disabledReason = undefined
     state.compressPermission = undefined
     state.prune = {
         messages: createPruneMessagesState(),
@@ -260,7 +268,43 @@ export async function ensureSessionInitialized(
     state.lastCompaction = findLastCompactionTimestamp(messages)
     state.currentTurn = countTurns(state, messages)
 
-    const persisted = await loadSessionState(sessionId, logger)
+    let persisted
+    try {
+        persisted = await loadSessionState(sessionId, logger)
+    } catch (error) {
+        if (!(error instanceof IncompatibleSessionStateError)) {
+            throw error
+        }
+
+        state.disabledReason = error.message
+        state.compressPermission = "deny"
+        logger.warn("ACP disabled for incompatible session", {
+            sessionId,
+            actualSchemaVersion: error.actualSchemaVersion,
+            expectedSchemaVersion: SESSION_STATE_SCHEMA_VERSION,
+        })
+        try {
+            await client?.tui?.showToast?.({
+                body: {
+                    title: "ACP disabled for this session",
+                    message:
+                        `${error.message} Start a new session to use ACP, or reopen this ` +
+                        "session with an ACP version that supports its state.",
+                    variant: "warning",
+                    duration: 10000,
+                },
+            })
+        } catch (notificationError) {
+            logger.warn("Failed to show incompatible session warning", {
+                sessionId,
+                error:
+                    notificationError instanceof Error
+                        ? notificationError.message
+                        : String(notificationError),
+            })
+        }
+        return
+    }
     if (persisted === null) {
         // State schemas are intentionally not migrated or replayed. A session
         // without current state starts a fresh A-generation context graph.

@@ -1,5 +1,6 @@
 import type { SessionState, WithParts } from "./state"
 import type { Logger } from "./logger"
+/** 已禁用会话不得执行 ACP 的提示词、消息、命令或文本变换。 */
 import type { PluginConfig } from "./config"
 import { assignMessageRefs } from "./message-ids"
 import {
@@ -98,16 +99,16 @@ export function createSystemPromptHandler(
         // messages.transform creates the session state before this fires; if
         // absent (internal-agent early-return), there is nothing to attribute.
         const state = input.sessionID ? registry.get(input.sessionID) : undefined
+        if (!state || state.disabledReason || (state.isSubAgent && !config.allowSubAgents)) {
+            return
+        }
+
         if (state && input.model?.limit?.context) {
             state.modelContextLimit = input.model.limit.context
             // [FIX #312 follow-up] Record WHICH model the limit belongs to so
             // the messages hook can detect staleness on a catalog miss.
             state.modelProviderID = input.model?.providerID
             state.modelID = input.model?.id
-        }
-
-        if (!state || (state.isSubAgent && !config.allowSubAgents)) {
-            return
         }
 
         const systemText = output.system.join("\n")
@@ -186,6 +187,10 @@ export function createChatMessageTransformHandler(
                 messages,
                 config,
             )
+
+            if (state.disabledReason) {
+                return
+            }
 
             // [FIX #312] system.transform (the only writer of
             // state.modelContextLimit) fires AFTER messages.transform within
@@ -356,6 +361,10 @@ export function createCommandExecuteHandler(
 
             const state = await registry.getOrCreate(client, input.sessionID, messages, config)
 
+            if (state.disabledReason) {
+                throw new Error("__DCP_CONTEXT_HANDLED__")
+            }
+
             syncCompressPermissionState(state, config, hostPermissions, messages)
 
             const commandCtx = {
@@ -391,11 +400,14 @@ export function createCommandExecuteHandler(
     }
 }
 
-export function createTextCompleteHandler() {
+export function createTextCompleteHandler(registry?: SessionStateRegistry) {
     return async (
-        _input: { sessionID: string; messageID: string; partID: string },
+        input: { sessionID: string; messageID: string; partID: string },
         output: { text: string },
     ) => {
+        if (registry?.get(input.sessionID)?.disabledReason) {
+            return
+        }
         output.text = stripHallucinationsFromString(output.text)
     }
 }

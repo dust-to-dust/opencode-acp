@@ -1,3 +1,4 @@
+/** 验证生产提示词的全局优先与内置回退，以及开发环境仅使用内置提示词。 */
 import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -6,7 +7,11 @@ import test from "node:test"
 import type { PluginConfig } from "../lib/config"
 import { createSystemPromptHandler } from "../lib/hooks"
 import { Logger } from "../lib/logger"
-import { PromptStore, type PromptKey } from "../lib/prompts/store"
+import {
+    PromptStore,
+    resolveBundledPromptsDir,
+    type PromptKey,
+} from "../lib/prompts/store"
 import { SessionStateRegistry } from "../lib/state"
 
 const promptFiles: Record<PromptKey, string> = {
@@ -82,7 +87,11 @@ function buildConfig(): PluginConfig {
 test("loads every runtime prompt from the global ACM prompt directory", () => {
     const fixture = createPromptFixture()
     try {
-        const prompts = new PromptStore(new Logger(false), fixture.promptsDir).getRuntimePrompts()
+        const prompts = new PromptStore(
+            new Logger(false),
+            true,
+            fixture.promptsDir,
+        ).getRuntimePrompts()
 
         assert.match(prompts.system, /Global system prompt/)
         assert.equal(prompts.compressRange, promptFiles["compress-range"])
@@ -99,7 +108,7 @@ test("loads every runtime prompt from the global ACM prompt directory", () => {
 test("reload reads prompt edits from the same global directory", () => {
     const fixture = createPromptFixture()
     try {
-        const store = new PromptStore(new Logger(false), fixture.promptsDir)
+        const store = new PromptStore(new Logger(false), true, fixture.promptsDir)
         writeFileSync(
             join(fixture.promptsDir, "compression-request.md"),
             "Reloaded request {{candidates}} {{cacheBoundary}}\n",
@@ -114,14 +123,16 @@ test("reload reads prompt edits from the same global directory", () => {
     }
 })
 
-test("missing global prompt fails instead of falling back to a bundled copy", () => {
+test("missing production global prompt falls back to the bundled copy", () => {
     const fixture = createPromptFixture()
     try {
         rmSync(join(fixture.promptsDir, "compression-request.md"))
-        assert.throws(
-            () => new PromptStore(new Logger(false), fixture.promptsDir),
-            /ACP prompt file is required.*compression-request\.md/,
-        )
+        const prompts = new PromptStore(
+            new Logger(false),
+            true,
+            fixture.promptsDir,
+        ).getRuntimePrompts()
+        assert.match(prompts.compressionRequest, /\{\{candidates\}\}/)
     } finally {
         fixture.cleanup()
     }
@@ -140,7 +151,7 @@ test("global system prompt reaches the final system transform payload", async ()
             registry,
             logger,
             config,
-            new PromptStore(logger, fixture.promptsDir),
+            new PromptStore(logger, true, fixture.promptsDir),
         )
         const output = { system: ["Base system"] }
 
@@ -154,6 +165,22 @@ test("global system prompt reaches the final system transform payload", async ()
 
         assert.match(output.system[0], /^Base system/)
         assert.match(output.system[0], /Global system prompt/)
+    } finally {
+        fixture.cleanup()
+    }
+})
+
+test("development ignores global prompt files", () => {
+    const fixture = createPromptFixture()
+    try {
+        const prompts = new PromptStore(
+            new Logger(false),
+            false,
+            fixture.promptsDir,
+        ).getRuntimePrompts()
+
+        assert.notEqual(prompts.compressRange, promptFiles["compress-range"])
+        assert.equal(resolveBundledPromptsDir().endsWith(join("config", "prompts")), true)
     } finally {
         fixture.cleanup()
     }

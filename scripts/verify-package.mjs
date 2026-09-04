@@ -1,3 +1,4 @@
+/** 发布包必须包含运行时回退所需的完整配置和提示词。 */
 import { builtinModules, createRequire } from "node:module"
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { execFileSync } from "node:child_process"
@@ -46,7 +47,6 @@ const forbiddenTarballPatterns = [
     /^\.github\//,
     /^package-lock\.json$/,
     /^tsconfig\.json$/,
-    /^config\/prompts\//,
 ]
 
 const packageInfoCache = new Map()
@@ -80,7 +80,13 @@ function assertPackageJsonShape() {
     }
 
     const files = Array.isArray(pkg.files) ? pkg.files : []
-    for (const entry of ["dist/", "config/acp.jsonc", "README.md", "LICENSE"]) {
+    for (const entry of [
+        "dist/",
+        "config/acp.jsonc",
+        "config/prompts/*.md",
+        "README.md",
+        "LICENSE",
+    ]) {
         if (!files.includes(entry)) {
             fail(`package.json files must include ${entry}`)
         }
@@ -126,7 +132,7 @@ function assertPromptAssets() {
         if (/<{7}|={7}|>{7}/.test(content)) {
             fail(`prompt asset contains conflict markers: ${relativePath}`)
         }
-
+        requiredTarballFiles.push(relativePath.replaceAll("\\", "/"))
     }
 }
 

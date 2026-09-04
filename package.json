@@ -73,6 +73,7 @@
     "files": [
         "dist/",
         "config/acp.jsonc",
+        "config/prompts/*.md",
         "README.md",
         "README.zh-CN.md",
         "LICENSE",

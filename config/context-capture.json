@@ -1,0 +1,5 @@
+{
+  "enabled": false,
+  "dumpDir": "~/.local/share/opencode/context-dumps",
+  "maxArchives": 100
+}

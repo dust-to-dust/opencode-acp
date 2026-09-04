@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs"
+/** 配置仅来自插件内置文件；生产环境可由全局 ACM 文件整体覆盖，不读取项目配置。 */
+import { existsSync, readFileSync } from "fs"
 import { homedir } from "os"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
@@ -1021,44 +1022,9 @@ function selectConfigFile(directory: string): string | null {
     return existsSync(jsoncPath) ? jsoncPath : existsSync(jsonPath) ? jsonPath : null
 }
 
-function findOpencodeDir(startDir: string): string | null {
-    let current = startDir
-    while (true) {
-        const candidate = join(current, ".opencode")
-        try {
-            if (existsSync(candidate) && statSync(candidate).isDirectory()) return candidate
-        } catch {}
-        const parent = dirname(current)
-        if (parent === current) return null
-        current = parent
-    }
-}
-
-function getConfigPaths(ctx: PluginInput): {
-    global: string | null
-    project: string | null
-    globalDir: string
-} {
+function getGlobalConfigPath(): string | null {
     const globalDir = join(homedir(), ".config", "opencode", "acm")
-    const global = selectConfigFile(globalDir)
-    const opencodeDir = findOpencodeDir(ctx.directory)
-    const project = opencodeDir ? selectConfigFile(opencodeDir) : null
-    return { global, project, globalDir }
-}
-
-function createDefaultConfig(globalDir: string): void {
-    if (!existsSync(globalDir)) mkdirSync(globalDir, { recursive: true })
-    const globalPath = join(globalDir, "acp.jsonc")
-    if (!existsSync(globalPath)) {
-        writeFileSync(
-            globalPath,
-            `{
-  "$schema": "https://raw.githubusercontent.com/ranxianglei/opencode-acp/master/dcp.schema.json"
-}
-`,
-            "utf-8",
-        )
-    }
+    return selectConfigFile(globalDir)
 }
 
 function scheduleParseWarning(ctx: PluginInput, title: string, message: string): void {
@@ -1071,30 +1037,22 @@ function scheduleParseWarning(ctx: PluginInput, title: string, message: string):
     }, 7000)
 }
 
-export function getConfig(ctx: PluginInput): PluginConfig {
+export function getConfig(ctx: PluginInput, production: boolean): PluginConfig {
     let config = deepCloneConfig(getBundledConfig())
-    const configPaths = getConfigPaths(ctx)
+    if (!production) return config
 
-    if (!configPaths.global) createDefaultConfig(configPaths.globalDir)
+    const globalPath = getGlobalConfigPath()
+    if (!globalPath) return config
 
-    const layers: Array<{ path: string | null; name: string; isProject: boolean }> = [
-        { path: configPaths.global, name: "global config", isProject: false },
-        { path: configPaths.project, name: "project config", isProject: true },
-    ]
-
-    for (const layer of layers) {
-        if (!layer.path) continue
-        const result = loadConfigFile(layer.path)
-        if (result.parseError) {
-            scheduleParseWarning(
-                ctx,
-                `ACP: Invalid ${layer.name}`,
-                `${layer.path}\n${result.parseError}\nUsing previous/default values`,
-            )
-            continue
-        }
-        if (!result.data || !result.rawData) continue
-        showConfigWarnings(ctx, layer.path, result.rawData, layer.isProject)
+    const result = loadConfigFile(globalPath)
+    if (result.parseError) {
+        scheduleParseWarning(
+            ctx,
+            "ACP: Invalid global config",
+            `${globalPath}\n${result.parseError}\nUsing bundled values`,
+        )
+    } else if (result.data && result.rawData) {
+        showConfigWarnings(ctx, globalPath, result.rawData, false)
         config = mergeLayer(config, result.data)
     }
 

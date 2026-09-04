@@ -1,5 +1,5 @@
 <TOOL:ACM>
-Maybe it's time to `compress`, then continue with the task.
+Must `compress` now, then continue with the task.
 
 Eligible blocks (oldest first):
 {{candidates}}

@@ -1,21 +1,5 @@
 #!/usr/bin/env bash
-#
-# dev-deploy.sh — Build and deploy opencode-acp to the local opencode plugin cache.
-#
-# This is the canonical "one command" for local development:
-#   1. Cleans dist/
-#   2. Builds (tsup bundle + tsc declaration types)
-#   3. Copies dist/ + config/ + package.json to the opencode plugin cache
-#
-# opencode resolves "opencode-acp@latest" to:
-#   ~/.cache/opencode/packages/opencode-acp@latest/node_modules/opencode-acp/
-#
-# Usage:
-#   ./scripts/dev-deploy.sh           # Build + deploy (default)
-#   ./scripts/dev-deploy.sh --no-build # Deploy existing dist/ only
-#   ./scripts/dev-deploy.sh --check    # Build + deploy + run tests first
-#
-# After deploying, restart opencode to load the new code.
+# 开发部署：更新插件缓存，并只向全局 ACM 目录补齐缺失配置；部署后需重启 OpenCode。
 #
 set -euo pipefail
 
@@ -162,12 +146,12 @@ fi
 
 info "Deploying version: v$DEPLOY_VER"
 
-# Copy compiled code, package metadata, and the bundled configuration only.
-# Prompt files live exclusively in the global ACM configuration directory.
+# Copy compiled code, package metadata, and all bundled fallback configuration.
 cp -r "$PROJECT_ROOT/dist/"* "$DEPLOY_TARGET/dist/"
 rm -rf "$DEPLOY_TARGET/config"
-mkdir -p "$DEPLOY_TARGET/config"
+mkdir -p "$DEPLOY_TARGET/config/prompts"
 cp "$PROJECT_ROOT/config/acp.jsonc" "$DEPLOY_TARGET/config/acp.jsonc"
+cp "$PROJECT_ROOT/config/prompts/"*.md "$DEPLOY_TARGET/config/prompts/"
 cp "$PROJECT_ROOT/package.json" "$DEPLOY_TARGET/package.json"
 
 # Patch version in deployed package.json if bumped (don't touch source tree)
@@ -195,8 +179,9 @@ DEPLOYED_VER=$(ACP_PACKAGE_JSON="$DEPLOYED_PACKAGE_JSON" node -p "require(proces
 if [[ -d "$LEGACY_TARGET/dist" ]]; then
     cp -r "$PROJECT_ROOT/dist/"* "$LEGACY_TARGET/dist/"
     rm -rf "$LEGACY_TARGET/config"
-    mkdir -p "$LEGACY_TARGET/config"
+    mkdir -p "$LEGACY_TARGET/config/prompts"
     cp "$PROJECT_ROOT/config/acp.jsonc" "$LEGACY_TARGET/config/acp.jsonc"
+    cp "$PROJECT_ROOT/config/prompts/"*.md "$LEGACY_TARGET/config/prompts/"
     cp "$PROJECT_ROOT/package.json" "$LEGACY_TARGET/package.json"
     if [[ "$DEPLOY_VER" != "$LOCAL_VER" ]]; then
         ACP_PACKAGE_JSON="$(node_path "$LEGACY_TARGET/package.json")" node -e "
@@ -218,9 +203,7 @@ else
     info "No legacy install at $LEGACY_TARGET — skipping sync"
 fi
 
-# ── Step 6: Initialize user-editable ACM files ─────────────────────────────
-# Prompt files have one runtime location. Deploy missing defaults without
-# overwriting user edits, and remove obsolete files that no runtime path reads.
+# ── Step 6: Initialize missing production ACM files ─────────────────────────
 
 step "Initializing ACM config directory: $ACM_CONFIG_DIR"
 mkdir -p "$ACM_PROMPTS_DIR"
@@ -228,26 +211,18 @@ mkdir -p "$ACM_PROMPTS_DIR"
 if [[ ! -f "$ACM_CONFIG_DIR/acp.jsonc" && ! -f "$ACM_CONFIG_DIR/acp.json" ]]; then
     cp "$PROJECT_ROOT/config/acp.jsonc" "$ACM_CONFIG_DIR/acp.jsonc"
     info "Created ACM config: $ACM_CONFIG_DIR/acp.jsonc"
+else
+    info "Preserved existing ACM config"
 fi
 
-for prompt_name in \
-    system \
-    compress-range \
-    context-limit-nudge \
-    subagent-extension \
-    decompress-extension \
-    protected-tools \
-    compression-request; do
-    prompt_path="$ACM_PROMPTS_DIR/$prompt_name.md"
+for source_prompt in "$PROJECT_ROOT/config/prompts/"*.md; do
+    prompt_name="$(basename "$source_prompt")"
+    prompt_path="$ACM_PROMPTS_DIR/$prompt_name"
     if [[ ! -f "$prompt_path" ]]; then
-        cp "$PROJECT_ROOT/config/prompts/$prompt_name.md" "$prompt_path"
+        cp "$source_prompt" "$prompt_path"
+        info "Created ACM prompt: $prompt_path"
     fi
 done
-
-rm -f \
-    "$ACM_PROMPTS_DIR/turn-nudge.md" \
-    "$ACM_PROMPTS_DIR/iteration-nudge.md" \
-    "$ACM_PROMPTS_DIR/how-to-compress.md"
 
 info "ACM prompts: $ACM_PROMPTS_DIR"
 

@@ -1,8 +1,4 @@
-/**
- * State persistence module for ACP plugin.
- * Persists pruned tool IDs across sessions so they survive OpenCode restarts.
- * Storage location: ~/.local/share/opencode/storage/plugin/acp/{sessionId}.json
- */
+/** 会话状态仅加载当前结构版本；不兼容状态必须上抛且禁止写回。 */
 
 import * as fs from "fs/promises"
 import { existsSync } from "fs"
@@ -17,6 +13,21 @@ import type {
 } from "./types"
 import type { Logger } from "../logger"
 import { serializePruneMessagesState } from "./utils"
+
+export const SESSION_STATE_SCHEMA_VERSION = 3
+
+export class IncompatibleSessionStateError extends Error {
+    constructor(
+        readonly sessionId: string,
+        readonly actualSchemaVersion: unknown,
+    ) {
+        super(
+            `Session ${sessionId} uses ACP state schema ${String(actualSchemaVersion)}; ` +
+                `this version requires schema ${SESSION_STATE_SCHEMA_VERSION}.`,
+        )
+        this.name = "IncompatibleSessionStateError"
+    }
+}
 
 /** Prune state as stored on disk */
 export interface PersistedPruneMessagesState {
@@ -54,7 +65,7 @@ export interface PersistedMessageIds {
 }
 
 export interface PersistedSessionState {
-    schemaVersion: 3
+    schemaVersion: typeof SESSION_STATE_SCHEMA_VERSION
     sessionName?: string
     prune: PersistedPrune
     nudges: PersistedNudges
@@ -116,12 +127,12 @@ export async function saveSessionState(
     logger: Logger,
     sessionName?: string,
 ): Promise<void> {
-    if (!sessionState.sessionId) {
+    if (!sessionState.sessionId || sessionState.disabledReason) {
         return
     }
 
     const state: PersistedSessionState = {
-        schemaVersion: 3,
+        schemaVersion: SESSION_STATE_SCHEMA_VERSION,
         sessionName: sessionName,
         prune: {
             messages: serializePruneMessagesState(sessionState.prune.messages),
@@ -166,11 +177,13 @@ export async function loadSessionState(
         const content = await fs.readFile(filePath, "utf-8")
         const state = JSON.parse(content) as PersistedSessionState
 
-        if (state?.schemaVersion !== 3) {
-            logger.info("Ignoring state from an incompatible ACP session schema", {
+        if (state?.schemaVersion !== SESSION_STATE_SCHEMA_VERSION) {
+            logger.warn("Detected incompatible ACP session state", {
                 sessionId,
+                actualSchemaVersion: state?.schemaVersion,
+                expectedSchemaVersion: SESSION_STATE_SCHEMA_VERSION,
             })
-            return null
+            throw new IncompatibleSessionStateError(sessionId, state?.schemaVersion)
         }
 
         const hasPruneMessages = state?.prune?.messages && typeof state.prune.messages === "object"
@@ -197,6 +210,9 @@ export async function loadSessionState(
 
         return state
     } catch (error: any) {
+        if (error instanceof IncompatibleSessionStateError) {
+            throw error
+        }
         logger.warn("Failed to load session state", {
             sessionId: sessionId,
             error: error?.message,

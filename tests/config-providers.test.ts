@@ -1,3 +1,4 @@
+/** 验证生产配置仅采用全局覆盖，开发配置仅采用插件内置默认值。 */
 import assert from "node:assert/strict"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -73,7 +74,7 @@ test("mergeCompress preserves explicit false and zero values", () => {
     assert.equal(merged.preserveRecentMessages, 0)
 })
 
-test("getConfig layers ACM global and nearest project overrides", () => {
+test("production getConfig loads ACM global config and ignores project config", () => {
     const root = mkdtempSync(join(tmpdir(), "acp-config-"))
     const globalHome = join(root, "global-home")
     const globalDir = join(globalHome, ".config", "opencode", "acm")
@@ -153,7 +154,10 @@ test("getConfig layers ACM global and nearest project overrides", () => {
     process.env.XDG_CONFIG_HOME = xdgConfigHome
     process.env.OPENCODE_CONFIG_DIR = configDir
     try {
-        const config = getConfig({ directory: projectDirectory } as Parameters<typeof getConfig>[0])
+        const config = getConfig(
+            { directory: projectDirectory } as Parameters<typeof getConfig>[0],
+            true,
+        )
 
         assert.equal(config.compress.showCompression, false)
         assert.equal(config.compress.minNudgeContextPercent, 0)
@@ -162,16 +166,15 @@ test("getConfig layers ACM global and nearest project overrides", () => {
             models: {
                 model: {
                     minNudgeContextPercent: 9,
-                    nudgeForce: "strong",
                 },
             },
         })
         assert.deepEqual(config.gc.batchCleanup, {
             lowThreshold: "60%",
             highThreshold: "75%",
-            forceThreshold: "95%",
+            forceThreshold: "90%",
         })
-        assert.deepEqual(config.qualityGate.algorithms.custom, { one: 3 })
+        assert.deepEqual(config.qualityGate.algorithms.custom, { one: 1 })
         assert.equal(config.messageFilters.filters["omo-context"].enabled, false)
         assert.equal("custom" in config.messageFilters.filters, false)
     } finally {
@@ -185,6 +188,15 @@ test("getConfig layers ACM global and nearest project overrides", () => {
         else process.env.OPENCODE_CONFIG_DIR = previousConfigDir
         rmSync(root, { recursive: true, force: true })
     }
+})
+
+test("development getConfig ignores global config", () => {
+    const bundled = getBundledConfig()
+    const config = getConfig({ directory: process.cwd() } as Parameters<typeof getConfig>[0], false)
+
+    assert.equal(config.compress.maxContextLimit, bundled.compress.maxContextLimit)
+    assert.equal(config.compress.showCompression, bundled.compress.showCompression)
+    assert.deepEqual(config.compress.modelMaxLimits, bundled.compress.modelMaxLimits)
 })
 
 // ── mergeCompress: nested providers deep-merge across config layers ──

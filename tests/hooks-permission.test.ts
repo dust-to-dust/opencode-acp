@@ -175,6 +175,18 @@ test("text complete strips hallucinated metadata tags", async () => {
     assert.equal(output.text, "alpha  omega")
 })
 
+test("text complete leaves output unchanged for a self-disabled session", async () => {
+    const state = createSessionState()
+    state.sessionId = "session-1"
+    state.disabledReason = "incompatible state"
+    const output = { text: "alpha <dcp-message-id>hidden</dcp-message-id> omega" }
+    const handler = createTextCompleteHandler(createTestRegistry(state) as any)
+
+    await handler({ sessionID: "session-1", messageID: "message-1", partID: "part-1" }, output)
+
+    assert.equal(output.text, "alpha <dcp-message-id>hidden</dcp-message-id> omega")
+})
+
 test("event hook attaches durations to matching blocks by message and call id", async () => {
     const state = createSessionState()
     state.sessionId = "session-1"
